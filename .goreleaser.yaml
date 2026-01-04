@@ -5,7 +5,6 @@ project_name: taws
 before:
   hooks:
     - rustup default stable
-    - cargo install --locked cargo-zigbuild
 
 builds:
   - id: taws
