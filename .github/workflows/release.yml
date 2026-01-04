@@ -16,7 +16,7 @@ jobs:
     outputs:
       new_tag: v${{ inputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - name: Update Cargo.toml version
@@ -50,7 +50,7 @@ jobs:
             suffix: ".exe"
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: v${{ inputs.version }}
       - name: Install Rust
@@ -82,7 +82,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: v${{ inputs.version }}
       - name: Download Artifacts
