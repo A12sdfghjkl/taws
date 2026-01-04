@@ -17,7 +17,7 @@
       ],
       "sub_resources": [],
       "actions": [
-        { "key": "D", "display_name": "Delete Stack", "sdk_method": "delete_stack", "needs_confirm": true }
+        { "key": "ctrl+d", "display_name": "Delete Stack", "shortcut": "ctrl+d", "sdk_method": "delete_stack", "confirm": { "message": "Delete CloudFormation stack", "default_yes": false, "destructive": true } }
       ]
     }
   }

@@ -1,5 +1,4 @@
-use crate::app::{App, ConfirmAction};
-use crate::resource::extract_json_value;
+use crate::app::App;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -9,86 +8,91 @@ use ratatui::{
 };
 
 pub fn render(f: &mut Frame, app: &App) {
-    let Some(item) = app.selected_item() else {
+    let Some(pending) = &app.pending_action else {
         return;
     };
 
-    let Some(action) = &app.confirm_action else {
-        return;
-    };
-
-    let area = centered_rect(50, 20, f.area());
+    let area = centered_rect(50, 25, f.area());
 
     f.render_widget(Clear, area);
 
-    let (title, message) = match action {
-        ConfirmAction::Terminate => {
-            let name = if let Some(resource) = app.current_resource() {
-                extract_json_value(item, &resource.name_field)
-            } else {
-                "-".to_string()
-            };
-            let id = if let Some(resource) = app.current_resource() {
-                extract_json_value(item, &resource.id_field)
-            } else {
-                "-".to_string()
-            };
-            
-            (
-                " Terminate Instance ",
-                format!(
-                    "Are you sure you want to terminate {}?\n\nInstance: {}\n\nThis action cannot be undone!",
-                    name, id
-                ),
-            )
-        }
-        ConfirmAction::Custom(action_name) => {
-            let name = if let Some(resource) = app.current_resource() {
-                extract_json_value(item, &resource.name_field)
-            } else {
-                "-".to_string()
-            };
-            (
-                " Confirm Action ",
-                format!("Are you sure you want to {} on {}?", action_name, name),
-            )
-        }
+    // Determine colors based on destructive flag
+    let border_color = if pending.destructive {
+        Color::Red
+    } else {
+        Color::Yellow
     };
 
-    let text = vec![
+    let title = if pending.destructive {
+        " Confirm Destructive Action "
+    } else {
+        " Confirm Action "
+    };
+
+    // Build the message lines
+    let mut text = vec![
         Line::from(""),
         Line::from(Span::styled(
-            message,
+            &pending.message,
             Style::default().fg(Color::White),
         )),
         Line::from(""),
-        Line::from(vec![
-            Span::styled(
-                "[y]",
-                Style::default()
-                    .fg(Color::Red)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(" Yes  "),
-            Span::styled(
-                "[n]",
-                Style::default()
-                    .fg(Color::Green)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(" No"),
-        ]),
     ];
+
+    // Add warning for destructive actions
+    if pending.destructive {
+        text.push(Line::from(Span::styled(
+            "This action cannot be undone!",
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        )));
+        text.push(Line::from(""));
+    }
+
+    // Build Yes/No buttons with selection indicator
+    let yes_style = if pending.selected_yes {
+        Style::default()
+            .fg(Color::White)
+            .bg(if pending.destructive {
+                Color::Red
+            } else {
+                Color::Green
+            })
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+
+    let no_style = if !pending.selected_yes {
+        Style::default()
+            .fg(Color::White)
+            .bg(Color::Blue)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+
+    text.push(Line::from(vec![
+        Span::raw("        "),
+        Span::styled(" Yes ", yes_style),
+        Span::raw("     "),
+        Span::styled(" No ", no_style),
+    ]));
+
+    text.push(Line::from(""));
+    text.push(Line::from(Span::styled(
+        "← → to select, Enter to confirm, Esc to cancel",
+        Style::default().fg(Color::DarkGray),
+    )));
 
     let block = Block::default()
         .title(title)
         .title_style(
             Style::default()
-                .fg(Color::Red)
+                .fg(border_color)
                 .add_modifier(Modifier::BOLD),
         )
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Red));
+        .border_style(Style::default().fg(border_color));
 
     let paragraph = Paragraph::new(text).block(block);
 

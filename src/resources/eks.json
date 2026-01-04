@@ -17,7 +17,7 @@
       ],
       "sub_resources": [],
       "actions": [
-        { "key": "D", "display_name": "Delete Cluster", "sdk_method": "delete_cluster", "needs_confirm": true }
+        { "key": "ctrl+d", "display_name": "Delete Cluster", "shortcut": "ctrl+d", "sdk_method": "delete_cluster", "confirm": { "message": "Delete EKS cluster", "default_yes": false, "destructive": true } }
       ]
     }
   }

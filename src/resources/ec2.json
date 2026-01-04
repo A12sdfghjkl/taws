@@ -20,9 +20,9 @@
       ],
       "sub_resources": [],
       "actions": [
-        { "key": "s", "display_name": "Start", "sdk_method": "start_instance" },
-        { "key": "S", "display_name": "Stop", "sdk_method": "stop_instance" },
-        { "key": "T", "display_name": "Terminate", "sdk_method": "terminate_instance", "needs_confirm": true }
+        { "key": "s", "display_name": "Start", "shortcut": "s", "sdk_method": "start_instance" },
+        { "key": "S", "display_name": "Stop", "shortcut": "S", "sdk_method": "stop_instance", "confirm": { "message": "Stop instance", "default_yes": false } },
+        { "key": "ctrl+d", "display_name": "Terminate", "shortcut": "ctrl+d", "sdk_method": "terminate_instance", "confirm": { "message": "Terminate instance", "default_yes": false, "destructive": true } }
       ]
     }
   }

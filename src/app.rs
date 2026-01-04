@@ -4,7 +4,7 @@ use crate::config::Config;
 use crossterm::event::KeyCode;
 use crate::resource::{
     get_resource, get_all_resource_keys, ResourceDef, ResourceFilter, 
-    fetch_resources, extract_json_value, execute_action,
+    fetch_resources, extract_json_value,
 };
 use anyhow::Result;
 use serde_json::Value;
@@ -20,11 +20,24 @@ pub enum Mode {
     Describe,    // Viewing JSON details of selected item
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum ConfirmAction {
-    Terminate,
+/// Pending action that requires confirmation
+#[derive(Debug, Clone)]
+pub struct PendingAction {
+    /// Service name (e.g., "ec2")
+    pub service: String,
+    /// SDK method to call (e.g., "terminate_instance")  
+    pub sdk_method: String,
+    /// Resource ID to act on
+    pub resource_id: String,
+    /// Display message for confirmation dialog
+    pub message: String,
+    /// If true, default selection is No (kept for potential future use)
     #[allow(dead_code)]
-    Custom(String), // For dynamic actions (future use)
+    pub default_no: bool,
+    /// If true, show as destructive (red)
+    pub destructive: bool,
+    /// Currently selected option (true = Yes, false = No)
+    pub selected_yes: bool,
 }
 
 /// Parent context for hierarchical navigation
@@ -74,12 +87,13 @@ pub struct App {
     pub regions_selected: usize,
     
     // Confirmation
-    pub confirm_action: Option<ConfirmAction>,
+    pub pending_action: Option<PendingAction>,
     
     // UI state
     pub loading: bool,
     pub error_message: Option<String>,
     pub describe_scroll: usize,
+    pub describe_data: Option<Value>,  // Full resource details from describe API
     
     // Auto-refresh
     pub last_refresh: std::time::Instant,
@@ -125,10 +139,11 @@ impl App {
             available_regions,
             profiles_selected: 0,
             regions_selected: 0,
-            confirm_action: None,
+            pending_action: None,
             loading: false,
             error_message: None,
             describe_scroll: 0,
+            describe_data: None,
             last_refresh: std::time::Instant::now(),
             config,
             last_key_press: None,
@@ -306,8 +321,33 @@ impl App {
     }
 
     pub fn selected_item_json(&self) -> Option<String> {
+        // Use describe_data if available (full details), otherwise fall back to list data
+        if let Some(ref data) = self.describe_data {
+            return Some(serde_json::to_string_pretty(data).unwrap_or_default());
+        }
         self.selected_item()
             .map(|item| serde_json::to_string_pretty(item).unwrap_or_default())
+    }
+
+    /// Get the number of lines in the describe content
+    pub fn describe_line_count(&self) -> usize {
+        self.selected_item_json()
+            .map(|s| s.lines().count())
+            .unwrap_or(0)
+    }
+
+    /// Clamp describe scroll to valid range
+    #[allow(dead_code)]
+    pub fn clamp_describe_scroll(&mut self, visible_lines: usize) {
+        let total = self.describe_line_count();
+        let max_scroll = total.saturating_sub(visible_lines);
+        self.describe_scroll = self.describe_scroll.min(max_scroll);
+    }
+
+    /// Scroll describe view to bottom
+    pub fn describe_scroll_to_bottom(&mut self, visible_lines: usize) {
+        let total = self.describe_line_count();
+        self.describe_scroll = total.saturating_sub(visible_lines);
     }
 
     pub fn next(&mut self) {
@@ -482,16 +522,73 @@ impl App {
         self.mode = Mode::Help;
     }
 
-    pub fn enter_describe_mode(&mut self) {
-        if !self.filtered_items.is_empty() {
-            self.mode = Mode::Describe;
-            self.describe_scroll = 0;
+    pub async fn enter_describe_mode(&mut self) {
+        if self.filtered_items.is_empty() {
+            return;
+        }
+        
+        self.mode = Mode::Describe;
+        self.describe_scroll = 0;
+        self.describe_data = None;
+        
+        // Get the selected item's ID
+        if let Some(item) = self.selected_item() {
+            if let Some(resource_def) = self.current_resource() {
+                let id = crate::resource::extract_json_value(item, &resource_def.id_field);
+                if id != "-" && !id.is_empty() {
+                    // Fetch full details
+                    match crate::resource::describe_resource(
+                        &self.current_resource_key,
+                        &self.clients,
+                        &id,
+                    ).await {
+                        Ok(data) => {
+                            self.describe_data = Some(data);
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to fetch describe data: {}", e);
+                            // Fall back to list data
+                            self.describe_data = Some(item.clone());
+                        }
+                    }
+                }
+            }
         }
     }
 
-    pub fn enter_confirm_mode(&mut self, action: ConfirmAction) {
-        self.confirm_action = Some(action);
+    /// Enter confirmation mode for an action
+    pub fn enter_confirm_mode(&mut self, pending: PendingAction) {
+        self.pending_action = Some(pending);
         self.mode = Mode::Confirm;
+    }
+    
+    /// Create a pending action from an ActionDef
+    pub fn create_pending_action(&self, action: &crate::resource::ActionDef, resource_id: &str) -> Option<PendingAction> {
+        let config = action.get_confirm_config()?;
+        let resource_name = self.selected_item()
+            .and_then(|item| {
+                if let Some(resource_def) = self.current_resource() {
+                    let name = crate::resource::extract_json_value(item, &resource_def.name_field);
+                    if name != "-" && !name.is_empty() {
+                        return Some(name);
+                    }
+                }
+                None
+            })
+            .unwrap_or_else(|| resource_id.to_string());
+        
+        let message = config.message.unwrap_or_else(|| action.display_name.clone());
+        let default_no = !config.default_yes;
+        
+        Some(PendingAction {
+            service: self.current_resource()?.service.clone(),
+            sdk_method: action.sdk_method.clone(),
+            resource_id: resource_id.to_string(),
+            message: format!("{} '{}'?", message, resource_name),
+            default_no,
+            destructive: config.destructive,
+            selected_yes: config.default_yes, // Start with default selection
+        })
     }
 
     pub fn enter_profiles_mode(&mut self) {
@@ -514,7 +611,8 @@ impl App {
 
     pub fn exit_mode(&mut self) {
         self.mode = Mode::Normal;
-        self.confirm_action = None;
+        self.pending_action = None;
+        self.describe_data = None;  // Clear describe data when exiting
     }
 
     // =========================================================================
@@ -627,53 +725,6 @@ impl App {
 
     // =========================================================================
     // EC2 Actions (using SDK dispatcher)
-    // =========================================================================
-
-    pub async fn start_selected_instance(&mut self) -> Result<()> {
-        if self.current_resource_key != "ec2-instances" {
-            return Ok(());
-        }
-        
-        if let Some(item) = self.selected_item() {
-            let instance_id = extract_json_value(item, "InstanceId");
-            if instance_id != "-" {
-                execute_action("ec2", "start_instance", &self.clients, &instance_id).await?;
-                self.refresh_current().await?;
-            }
-        }
-        Ok(())
-    }
-
-    pub async fn stop_selected_instance(&mut self) -> Result<()> {
-        if self.current_resource_key != "ec2-instances" {
-            return Ok(());
-        }
-        
-        if let Some(item) = self.selected_item() {
-            let instance_id = extract_json_value(item, "InstanceId");
-            if instance_id != "-" {
-                execute_action("ec2", "stop_instance", &self.clients, &instance_id).await?;
-                self.refresh_current().await?;
-            }
-        }
-        Ok(())
-    }
-
-    pub async fn terminate_selected_instance(&mut self) -> Result<()> {
-        if self.current_resource_key != "ec2-instances" {
-            return Ok(());
-        }
-        
-        if let Some(item) = self.selected_item() {
-            let instance_id = extract_json_value(item, "InstanceId");
-            if instance_id != "-" {
-                execute_action("ec2", "terminate_instance", &self.clients, &instance_id).await?;
-                self.refresh_current().await?;
-            }
-        }
-        Ok(())
-    }
-
     // =========================================================================
     // Profile/Region Switching
     // =========================================================================

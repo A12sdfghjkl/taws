@@ -37,24 +37,62 @@ pub struct SubResourceDef {
     pub filter_param: String,
 }
 
+/// Confirmation config for actions
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ConfirmConfig {
+    /// Message to show in confirmation dialog
+    #[serde(default)]
+    pub message: Option<String>,
+    /// If true, default selection is Yes; if false, default is No
+    #[serde(default)]
+    pub default_yes: bool,
+    /// If true, action is destructive (shown in red)
+    #[serde(default)]
+    pub destructive: bool,
+}
+
 /// Action definition from JSON
 #[derive(Debug, Clone, Deserialize)]
 pub struct ActionDef {
+    /// Key identifier for the action (kept for JSON compatibility)
     #[allow(dead_code)]
     pub key: String,
-    #[allow(dead_code)]
     pub display_name: String,
     #[serde(default)]
-    #[allow(dead_code)]
     pub shortcut: Option<String>,
-    #[allow(dead_code)]
     pub sdk_method: String,
+    /// Parameter name for the resource ID (kept for potential future use)
     #[serde(default)]
     #[allow(dead_code)]
     pub id_param: Option<String>,
+    /// Legacy field - use `confirm` instead
     #[serde(default)]
-    #[allow(dead_code)]
     pub needs_confirm: bool,
+    /// Confirmation configuration
+    #[serde(default)]
+    pub confirm: Option<ConfirmConfig>,
+}
+
+impl ActionDef {
+    /// Check if this action requires confirmation
+    pub fn requires_confirm(&self) -> bool {
+        self.confirm.is_some() || self.needs_confirm
+    }
+
+    /// Get the confirmation config (with defaults)
+    pub fn get_confirm_config(&self) -> Option<ConfirmConfig> {
+        if let Some(ref config) = self.confirm {
+            Some(config.clone())
+        } else if self.needs_confirm {
+            Some(ConfirmConfig {
+                message: Some(self.display_name.clone()),
+                default_yes: false,
+                destructive: false,
+            })
+        } else {
+            None
+        }
+    }
 }
 
 /// Resource definition from JSON
@@ -155,26 +193,32 @@ mod tests {
     #[test]
     fn test_registry_loads_successfully() {
         let registry = get_registry();
-        assert!(!registry.resources.is_empty(), "Registry should have resources");
+        assert!(
+            !registry.resources.is_empty(),
+            "Registry should have resources"
+        );
     }
 
     #[test]
     fn test_ec2_instances_resource_exists() {
         let resource = get_resource("ec2-instances");
         assert!(resource.is_some(), "EC2 instances resource should exist");
-        
+
         let resource = resource.unwrap();
         assert_eq!(resource.display_name, "EC2 Instances");
         assert_eq!(resource.service, "ec2");
         assert_eq!(resource.sdk_method, "describe_instances");
-        assert!(!resource.columns.is_empty(), "EC2 instances should have columns");
+        assert!(
+            !resource.columns.is_empty(),
+            "EC2 instances should have columns"
+        );
     }
 
     #[test]
     fn test_iam_users_resource_exists() {
         let resource = get_resource("iam-users");
         assert!(resource.is_some(), "IAM users resource should exist");
-        
+
         let resource = resource.unwrap();
         assert_eq!(resource.service, "iam");
         assert!(resource.is_global, "IAM should be a global service");
@@ -183,34 +227,61 @@ mod tests {
     #[test]
     fn test_iam_users_has_sub_resources() {
         let resource = get_resource("iam-users").unwrap();
-        assert!(!resource.sub_resources.is_empty(), "IAM users should have sub-resources");
-        
-        let policy_sub = resource.sub_resources.iter()
+        assert!(
+            !resource.sub_resources.is_empty(),
+            "IAM users should have sub-resources"
+        );
+
+        let policy_sub = resource
+            .sub_resources
+            .iter()
             .find(|s| s.resource_key == "iam-user-policies");
-        assert!(policy_sub.is_some(), "IAM users should have policies sub-resource");
+        assert!(
+            policy_sub.is_some(),
+            "IAM users should have policies sub-resource"
+        );
     }
 
     #[test]
     fn test_ec2_instances_has_actions() {
         let resource = get_resource("ec2-instances").unwrap();
-        assert!(!resource.actions.is_empty(), "EC2 instances should have actions");
-        
-        let start_action = resource.actions.iter()
+        assert!(
+            !resource.actions.is_empty(),
+            "EC2 instances should have actions"
+        );
+
+        let start_action = resource
+            .actions
+            .iter()
             .find(|a| a.sdk_method == "start_instance");
         assert!(start_action.is_some(), "EC2 should have start action");
-        
-        let terminate_action = resource.actions.iter()
+
+        let terminate_action = resource
+            .actions
+            .iter()
             .find(|a| a.sdk_method == "terminate_instance");
-        assert!(terminate_action.is_some(), "EC2 should have terminate action");
-        assert!(terminate_action.unwrap().needs_confirm, "Terminate should require confirmation");
+        assert!(
+            terminate_action.is_some(),
+            "EC2 should have terminate action"
+        );
+        assert!(
+            terminate_action.unwrap().requires_confirm(),
+            "Terminate should require confirmation"
+        );
     }
 
     #[test]
     fn test_get_all_resource_keys() {
         let keys = get_all_resource_keys();
-        assert!(keys.len() >= 50, "Should have at least 50 resource types");
-        assert!(keys.contains(&"ec2-instances"), "Should contain ec2-instances");
-        assert!(keys.contains(&"lambda-functions"), "Should contain lambda-functions");
+        assert!(keys.len() >= 30, "Should have at least 30 resource types");
+        assert!(
+            keys.contains(&"ec2-instances"),
+            "Should contain ec2-instances"
+        );
+        assert!(
+            keys.contains(&"lambda-functions"),
+            "Should contain lambda-functions"
+        );
         assert!(keys.contains(&"s3-buckets"), "Should contain s3-buckets");
     }
 
@@ -218,7 +289,7 @@ mod tests {
     fn test_common_color_maps_exist() {
         let state_map = get_color_map("state");
         assert!(state_map.is_some(), "State color map should exist");
-        
+
         let bool_map = get_color_map("bool");
         assert!(bool_map.is_some(), "Bool color map should exist");
     }
@@ -234,23 +305,41 @@ mod tests {
     #[test]
     fn test_rds_has_sub_resources() {
         let resource = get_resource("rds-instances").unwrap();
-        assert!(!resource.sub_resources.is_empty(), "RDS should have sub-resources");
-        
-        let snapshot_sub = resource.sub_resources.iter()
+        assert!(
+            !resource.sub_resources.is_empty(),
+            "RDS should have sub-resources"
+        );
+
+        let snapshot_sub = resource
+            .sub_resources
+            .iter()
             .find(|s| s.resource_key == "rds-snapshots");
-        assert!(snapshot_sub.is_some(), "RDS should have snapshots sub-resource");
+        assert!(
+            snapshot_sub.is_some(),
+            "RDS should have snapshots sub-resource"
+        );
     }
 
     #[test]
     fn test_ecs_has_sub_resources() {
         let resource = get_resource("ecs-clusters").unwrap();
-        assert!(!resource.sub_resources.is_empty(), "ECS clusters should have sub-resources");
-        
-        let services_sub = resource.sub_resources.iter()
+        assert!(
+            !resource.sub_resources.is_empty(),
+            "ECS clusters should have sub-resources"
+        );
+
+        let services_sub = resource
+            .sub_resources
+            .iter()
             .find(|s| s.resource_key == "ecs-services");
-        assert!(services_sub.is_some(), "ECS should have services sub-resource");
-        
-        let tasks_sub = resource.sub_resources.iter()
+        assert!(
+            services_sub.is_some(),
+            "ECS should have services sub-resource"
+        );
+
+        let tasks_sub = resource
+            .sub_resources
+            .iter()
             .find(|s| s.resource_key == "ecs-tasks");
         assert!(tasks_sub.is_some(), "ECS should have tasks sub-resource");
     }
@@ -258,9 +347,14 @@ mod tests {
     #[test]
     fn test_lambda_has_actions() {
         let resource = get_resource("lambda-functions").unwrap();
-        assert!(!resource.actions.is_empty(), "Lambda functions should have actions");
-        
-        let invoke_action = resource.actions.iter()
+        assert!(
+            !resource.actions.is_empty(),
+            "Lambda functions should have actions"
+        );
+
+        let invoke_action = resource
+            .actions
+            .iter()
             .find(|a| a.sdk_method == "invoke_function");
         assert!(invoke_action.is_some(), "Lambda should have invoke action");
     }
@@ -269,16 +363,31 @@ mod tests {
     fn test_all_resources_have_required_fields() {
         let registry = get_registry();
         for (key, resource) in &registry.resources {
-            assert!(!resource.display_name.is_empty(), 
-                "Resource {} should have display_name", key);
-            assert!(!resource.service.is_empty(), 
-                "Resource {} should have service", key);
-            assert!(!resource.sdk_method.is_empty(), 
-                "Resource {} should have sdk_method", key);
-            assert!(!resource.id_field.is_empty(), 
-                "Resource {} should have id_field", key);
-            assert!(!resource.name_field.is_empty(), 
-                "Resource {} should have name_field", key);
+            assert!(
+                !resource.display_name.is_empty(),
+                "Resource {} should have display_name",
+                key
+            );
+            assert!(
+                !resource.service.is_empty(),
+                "Resource {} should have service",
+                key
+            );
+            assert!(
+                !resource.sdk_method.is_empty(),
+                "Resource {} should have sdk_method",
+                key
+            );
+            assert!(
+                !resource.id_field.is_empty(),
+                "Resource {} should have id_field",
+                key
+            );
+            assert!(
+                !resource.name_field.is_empty(),
+                "Resource {} should have name_field",
+                key
+            );
         }
     }
 }

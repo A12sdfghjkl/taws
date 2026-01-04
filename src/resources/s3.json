@@ -15,7 +15,7 @@
       ],
       "sub_resources": [],
       "actions": [
-        { "key": "D", "display_name": "Delete Bucket", "sdk_method": "delete_bucket", "needs_confirm": true }
+        { "key": "ctrl+d", "display_name": "Delete Bucket", "shortcut": "ctrl+d", "sdk_method": "delete_bucket", "confirm": { "message": "Delete S3 bucket", "default_yes": false, "destructive": true } }
       ]
     }
   }

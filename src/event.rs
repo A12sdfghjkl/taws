@@ -1,4 +1,4 @@
-use crate::app::{App, ConfirmAction, Mode};
+use crate::app::{App, Mode};
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use std::time::Duration;
@@ -88,12 +88,28 @@ async fn handle_normal_mode(app: &mut App, key: KeyEvent) -> Result<bool> {
         KeyCode::Home => app.go_to_top(),
         KeyCode::Char('G') | KeyCode::End => app.go_to_bottom(),
 
-        // Page navigation
+        // Page navigation / Destructive action (ctrl+d)
         KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            // ctrl+d = page down (or terminate in EC2 view)
-            if app.current_resource_key == "ec2-instances" {
-                app.enter_confirm_mode(ConfirmAction::Terminate);
-            } else {
+            // Check if current resource has a ctrl+d action defined
+            let mut action_triggered = false;
+            if let Some(resource) = app.current_resource() {
+                for action in &resource.actions {
+                    if action.shortcut.as_deref() == Some("ctrl+d") {
+                        if let Some(item) = app.selected_item() {
+                            let id = crate::resource::extract_json_value(item, &resource.id_field);
+                            if id != "-" && !id.is_empty() {
+                                if let Some(pending) = app.create_pending_action(action, &id) {
+                                    app.enter_confirm_mode(pending);
+                                    action_triggered = true;
+                                }
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+            // If no action, use as page down
+            if !action_triggered {
                 app.page_down(10);
             }
         }
@@ -108,8 +124,8 @@ async fn handle_normal_mode(app: &mut App, key: KeyEvent) -> Result<bool> {
         }
 
         // Describe mode (d or Enter)
-        KeyCode::Char('d') => app.enter_describe_mode(),
-        KeyCode::Enter => app.enter_describe_mode(),
+        KeyCode::Char('d') => app.enter_describe_mode().await,
+        KeyCode::Enter => app.enter_describe_mode().await,
 
         // Filter toggle
         KeyCode::Char('/') => {
@@ -152,17 +168,38 @@ async fn handle_normal_mode(app: &mut App, key: KeyEvent) -> Result<bool> {
                     }
                 }
                 
-                 // EC2-specific actions (only if nothing else matched)
-                // Note: EC2 has 'v' for volumes, so 's' and 'S' are free for start/stop
-                if !handled && app.current_resource_key == "ec2-instances" {
-                    match c {
-                        's' => {
-                            app.start_selected_instance().await?;
+                // Check if it matches an action shortcut
+                if !handled {
+                    if let Some(resource) = app.current_resource() {
+                        for action in &resource.actions {
+                            if action.shortcut.as_deref() == Some(&c.to_string()) {
+                                if let Some(item) = app.selected_item() {
+                                    let id = crate::resource::extract_json_value(item, &resource.id_field);
+                                    if id != "-" && !id.is_empty() {
+                                        // Check if action requires confirmation
+                                        if action.requires_confirm() {
+                                            if let Some(pending) = app.create_pending_action(action, &id) {
+                                                app.enter_confirm_mode(pending);
+                                                handled = true;
+                                            }
+                                        } else {
+                                            // Execute directly
+                                            if let Err(e) = crate::resource::execute_action(
+                                                &resource.service,
+                                                &action.sdk_method,
+                                                &app.clients,
+                                                &id
+                                            ).await {
+                                                app.error_message = Some(format!("Action failed: {}", e));
+                                            }
+                                            let _ = app.refresh_current().await;
+                                            handled = true;
+                                        }
+                                    }
+                                }
+                                break;
+                            }
                         }
-                        'S' => {
-                            app.stop_selected_instance().await?;
-                        }
-                        _ => {}
                     }
                 }
 
@@ -279,7 +316,8 @@ fn handle_describe_mode(app: &mut App, key: KeyEvent) -> Result<bool> {
             app.describe_scroll = 0;
         }
         KeyCode::Char('G') | KeyCode::End => {
-            app.describe_scroll = usize::MAX / 2;
+            // Scroll to bottom - use a large visible_lines estimate, will be clamped in render
+            app.describe_scroll_to_bottom(50);
         }
         _ => {}
     }
@@ -288,9 +326,41 @@ fn handle_describe_mode(app: &mut App, key: KeyEvent) -> Result<bool> {
 
 async fn handle_confirm_mode(app: &mut App, key: KeyEvent) -> Result<bool> {
     match key.code {
+        // Toggle selection with arrow keys or tab
+        KeyCode::Left | KeyCode::Right | KeyCode::Tab | KeyCode::Char('h') | KeyCode::Char('l') => {
+            if let Some(ref mut pending) = app.pending_action {
+                pending.selected_yes = !pending.selected_yes;
+            }
+        }
+        // Confirm with Enter
+        KeyCode::Enter => {
+            if let Some(ref pending) = app.pending_action {
+                if pending.selected_yes {
+                    // Execute the action
+                    let service = pending.service.clone();
+                    let method = pending.sdk_method.clone();
+                    let resource_id = pending.resource_id.clone();
+                    
+                    if let Err(e) = crate::resource::execute_action(&service, &method, &app.clients, &resource_id).await {
+                        app.error_message = Some(format!("Action failed: {}", e));
+                    }
+                    // Refresh after action
+                    let _ = app.refresh_current().await;
+                }
+            }
+            app.exit_mode();
+        }
+        // Quick yes/no
         KeyCode::Char('y') | KeyCode::Char('Y') => {
-            if let Some(ConfirmAction::Terminate) = &app.confirm_action {
-                app.terminate_selected_instance().await?;
+            if let Some(ref pending) = app.pending_action {
+                let service = pending.service.clone();
+                let method = pending.sdk_method.clone();
+                let resource_id = pending.resource_id.clone();
+                
+                if let Err(e) = crate::resource::execute_action(&service, &method, &app.clients, &resource_id).await {
+                    app.error_message = Some(format!("Action failed: {}", e));
+                }
+                let _ = app.refresh_current().await;
             }
             app.exit_mode();
         }

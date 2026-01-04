@@ -14,7 +14,7 @@
       ],
       "sub_resources": [],
       "actions": [
-        { "key": "D", "display_name": "Delete Topic", "sdk_method": "delete_topic", "needs_confirm": true }
+        { "key": "ctrl+d", "display_name": "Delete Topic", "shortcut": "ctrl+d", "sdk_method": "delete_topic", "confirm": { "message": "Delete SNS topic", "default_yes": false, "destructive": true } }
       ]
     }
   }

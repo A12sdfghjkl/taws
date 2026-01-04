@@ -20,19 +20,17 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
                 .add_modifier(Modifier::BOLD),
         ))
         .title_alignment(Alignment::Center);
-    
+
     let inner_area = block.inner(area);
     f.render_widget(block, area);
 
-    let header_cells = [" PROFILE"]
-        .iter()
-        .map(|h| {
-            Cell::from(*h).style(
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            )
-        });
+    let header_cells = [" PROFILE"].iter().map(|h| {
+        Cell::from(*h).style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )
+    });
 
     let header = Row::new(header_cells).height(1);
 
@@ -43,21 +41,25 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
             Style::default()
         };
 
-        let marker = if profile == &app.profile { " * " } else { "   " };
+        let marker = if profile == &app.profile {
+            " * "
+        } else {
+            "   "
+        };
 
-        Row::new(vec![Cell::from(format!("{}{}", marker, profile)).style(style)])
+        Row::new(vec![
+            Cell::from(format!("{}{}", marker, profile)).style(style)
+        ])
     });
 
     let widths = [ratatui::layout::Constraint::Percentage(100)];
 
-    let table = Table::new(rows, widths)
-        .header(header)
-        .row_highlight_style(
-            Style::default()
-                .bg(Color::DarkGray)
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
-        );
+    let table = Table::new(rows, widths).header(header).row_highlight_style(
+        Style::default()
+            .bg(Color::DarkGray)
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD),
+    );
 
     let mut state = TableState::default();
     state.select(Some(app.profiles_selected));

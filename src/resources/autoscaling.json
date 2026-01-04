@@ -19,7 +19,7 @@
       ],
       "sub_resources": [],
       "actions": [
-        { "key": "D", "display_name": "Delete Group", "sdk_method": "delete_auto_scaling_group", "needs_confirm": true }
+        { "key": "ctrl+d", "display_name": "Delete Group", "shortcut": "ctrl+d", "sdk_method": "delete_auto_scaling_group", "confirm": { "message": "Delete Auto Scaling group", "default_yes": false, "destructive": true } }
       ]
     }
   }

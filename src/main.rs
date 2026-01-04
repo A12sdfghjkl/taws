@@ -7,6 +7,7 @@ mod ui;
 
 use anyhow::Result;
 use app::App;
+use clap::{Parser, ValueEnum};
 use config::Config;
 use crossterm::{
     event::{poll, read, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
@@ -15,11 +16,108 @@ use crossterm::{
 };
 use ratatui::prelude::*;
 use std::io;
+use std::path::PathBuf;
 use std::time::Duration;
+use tracing::Level;
+use tracing_subscriber::fmt::writer::MakeWriterExt;
 use ui::splash::{SplashState, render as render_splash};
+
+/// Terminal UI for AWS
+#[derive(Parser, Debug)]
+#[command(name = "taws", version, about, long_about = None)]
+struct Args {
+    /// AWS profile to use
+    #[arg(short, long)]
+    profile: Option<String>,
+
+    /// AWS region to use
+    #[arg(short, long)]
+    region: Option<String>,
+
+    /// Log level for debugging (logs to ~/.config/taws/taws.log)
+    #[arg(long, value_enum, default_value = "off")]
+    log_level: LogLevel,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum LogLevel {
+    Off,
+    Error,
+    Warn,
+    Info,
+    Debug,
+    Trace,
+}
+
+impl LogLevel {
+    fn to_tracing_level(self) -> Option<Level> {
+        match self {
+            LogLevel::Off => None,
+            LogLevel::Error => Some(Level::ERROR),
+            LogLevel::Warn => Some(Level::WARN),
+            LogLevel::Info => Some(Level::INFO),
+            LogLevel::Debug => Some(Level::DEBUG),
+            LogLevel::Trace => Some(Level::TRACE),
+        }
+    }
+}
+
+fn setup_logging(level: LogLevel) -> Option<tracing_appender::non_blocking::WorkerGuard> {
+    let Some(tracing_level) = level.to_tracing_level() else {
+        return None;
+    };
+
+    // Get log file path
+    let log_path = get_log_path();
+    
+    // Ensure parent directory exists
+    if let Some(parent) = log_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    // Create file appender
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .expect("Failed to open log file");
+
+    let (non_blocking, guard) = tracing_appender::non_blocking(file);
+
+    tracing_subscriber::fmt()
+        .with_max_level(tracing_level)
+        .with_writer(non_blocking.with_max_level(tracing_level))
+        .with_ansi(false)
+        .with_target(true)
+        .with_thread_ids(false)
+        .with_file(true)
+        .with_line_number(true)
+        .init();
+
+    tracing::info!("taws started with log level: {:?}", level);
+    tracing::info!("Log file: {:?}", log_path);
+
+    Some(guard)
+}
+
+fn get_log_path() -> PathBuf {
+    if let Some(config_dir) = dirs::config_dir() {
+        return config_dir.join("taws").join("taws.log");
+    }
+    if let Some(home) = dirs::home_dir() {
+        return home.join(".taws").join("taws.log");
+    }
+    PathBuf::from("taws.log")
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Parse CLI arguments
+    let args = Args::parse();
+
+    // Setup logging (keep guard alive for the duration of the program)
+    let _log_guard = setup_logging(args.log_level);
+
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -28,7 +126,7 @@ async fn main() -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     // Show splash screen and initialize
-    let result = initialize_with_splash(&mut terminal).await;
+    let result = initialize_with_splash(&mut terminal, &args).await;
 
     match result {
         Ok(Some(mut app)) => {
@@ -70,7 +168,7 @@ where
     Ok(())
 }
 
-async fn initialize_with_splash<B: Backend>(terminal: &mut Terminal<B>) -> Result<Option<App>>
+async fn initialize_with_splash<B: Backend>(terminal: &mut Terminal<B>, args: &Args) -> Result<Option<App>>
 where
     B::Error: Send + Sync + 'static,
 {
@@ -84,10 +182,14 @@ where
         return Ok(None);
     }
 
-    // Step 1: Load configuration (env vars override saved config)
+    // Step 1: Load configuration (CLI args > env vars > saved config)
     let config = Config::load();
-    let profile = config.effective_profile();
-    let region = config.effective_region();
+    let profile = args.profile.clone()
+        .unwrap_or_else(|| config.effective_profile());
+    let region = args.region.clone()
+        .unwrap_or_else(|| config.effective_region());
+    
+    tracing::info!("Using profile: {}, region: {}", profile, region);
     
     splash.set_message(&format!("Loading AWS config [profile: {}]", profile));
     terminal.draw(|f| render_splash(f, &splash))?;

@@ -9,8 +9,18 @@ use aws_sigv4::sign::v4::SigningParams;
 use aws_smithy_runtime_api::client::identity::Identity;
 use std::time::SystemTime;
 use std::collections::HashMap;
+use tracing::{debug, trace, warn};
 
 use super::credentials::Credentials;
+
+/// Mask sensitive credential values for logging
+fn mask_credential(value: &str) -> String {
+    if value.len() <= 8 {
+        "*".repeat(value.len())
+    } else {
+        format!("{}...{}", &value[..4], &value[value.len()-4..])
+    }
+}
 
 /// AWS Service definition
 #[derive(Debug, Clone)]
@@ -299,6 +309,11 @@ pub struct AwsHttpClient {
 impl AwsHttpClient {
     /// Create a new AWS HTTP client
     pub fn new(credentials: Credentials, region: &str) -> Self {
+        debug!(
+            "Creating AWS HTTP client for region: {}, access_key: {}",
+            region,
+            mask_credential(&credentials.access_key_id)
+        );
         Self {
             http_client: Client::new(),
             credentials,
@@ -308,11 +323,16 @@ impl AwsHttpClient {
 
     /// Update region
     pub fn set_region(&mut self, region: &str) {
+        debug!("Switching region to: {}", region);
         self.region = region.to_string();
     }
 
     /// Update credentials
     pub fn set_credentials(&mut self, credentials: Credentials) {
+        debug!(
+            "Updating credentials, access_key: {}",
+            mask_credential(&credentials.access_key_id)
+        );
         self.credentials = credentials;
     }
 
@@ -349,10 +369,14 @@ impl AwsHttpClient {
         action: &str,
         params: &[(&str, &str)],
     ) -> Result<String> {
+        debug!("Query request: service={}, action={}", service_name, action);
+        trace!("Query params: {:?}", params);
+
         let service = get_service(service_name)
             .ok_or_else(|| anyhow!("Unknown service: {}", service_name))?;
 
         let endpoint = self.get_endpoint(&service);
+        debug!("Endpoint: {}", endpoint);
         
         // Build query string
         let mut query_params: Vec<(String, String)> = vec![
@@ -382,11 +406,15 @@ impl AwsHttpClient {
         target: &str,
         body: &str,
     ) -> Result<String> {
+        debug!("JSON request: service={}, target={}", service_name, target);
+        trace!("JSON body: {}", body);
+
         let service = get_service(service_name)
             .ok_or_else(|| anyhow!("Unknown service: {}", service_name))?;
 
         let endpoint = self.get_endpoint(&service);
         let url = format!("{}/", endpoint);
+        debug!("Endpoint: {}", endpoint);
 
         let target_header = format!(
             "{}.{}",
@@ -409,11 +437,15 @@ impl AwsHttpClient {
         path: &str,
         body: Option<&str>,
     ) -> Result<String> {
+        debug!("REST-JSON request: service={}, method={}, path={}", service_name, method, path);
+        trace!("REST-JSON body: {:?}", body);
+
         let service = get_service(service_name)
             .ok_or_else(|| anyhow!("Unknown service: {}", service_name))?;
 
         let endpoint = self.get_endpoint(&service);
         let url = format!("{}{}", endpoint, path);
+        debug!("URL: {}", url);
 
         let mut headers = HashMap::new();
         if body.is_some() {
@@ -431,11 +463,14 @@ impl AwsHttpClient {
         path: &str,
         body: Option<&str>,
     ) -> Result<String> {
+        debug!("REST-XML request: service={}, method={}, path={}", service_name, method, path);
+
         let service = get_service(service_name)
             .ok_or_else(|| anyhow!("Unknown service: {}", service_name))?;
 
         let endpoint = self.get_endpoint(&service);
         let url = format!("{}{}", endpoint, path);
+        debug!("URL: {}", url);
 
         self.signed_request(&service, method, &url, body.unwrap_or(""), None).await
     }
@@ -540,11 +575,16 @@ impl AwsHttpClient {
         }
 
         // Send request
+        trace!("Sending {} request to {}", method, url);
         let response = request.send().await?;
         let status = response.status();
         let text = response.text().await?;
 
+        debug!("Response status: {}", status);
+        trace!("Response body (first 2000 chars): {}", &text[..text.len().min(2000)]);
+
         if !status.is_success() {
+            warn!("AWS request failed: status={}, body={}", status, &text[..text.len().min(500)]);
             return Err(anyhow!("AWS request failed ({}): {}", status, text));
         }
 
@@ -552,89 +592,83 @@ impl AwsHttpClient {
     }
 }
 
-/// Parse XML response to JSON (simplified)
+/// Parse XML response to JSON using quick-xml
 pub fn xml_to_json(xml: &str) -> Result<serde_json::Value> {
-    // Simple XML to JSON conversion for AWS responses
-    // This is a simplified parser - AWS responses have predictable structures
-    
-    use serde_json::{Value, Map};
-    
-    fn parse_element(content: &str) -> Value {
-        let content = content.trim();
-        
-        // Check if it looks like XML
-        if !content.starts_with('<') {
-            // It's a text value
-            return Value::String(content.to_string());
-        }
-        
-        let mut result = Map::new();
-        let mut pos = 0;
-        
-        while pos < content.len() {
-            // Find next tag
-            let Some(tag_start) = content[pos..].find('<') else { break };
-            let tag_start = pos + tag_start;
-            
-            // Skip closing tags and special tags
-            if content[tag_start..].starts_with("</") || 
-               content[tag_start..].starts_with("<?") ||
-               content[tag_start..].starts_with("<!") {
-                pos = tag_start + 1;
-                if let Some(end) = content[pos..].find('>') {
-                    pos = pos + end + 1;
-                }
-                continue;
-            }
-            
-            let Some(tag_end) = content[tag_start..].find('>') else { break };
-            let tag_end = tag_start + tag_end;
-            
-            // Extract tag name (handle attributes)
-            let tag_content = &content[tag_start+1..tag_end];
-            let tag_name = tag_content.split_whitespace().next().unwrap_or(tag_content);
-            
-            // Self-closing tag?
-            if tag_content.ends_with('/') {
-                result.insert(tag_name.trim_end_matches('/').to_string(), Value::Null);
-                pos = tag_end + 1;
-                continue;
-            }
-            
-            // Find closing tag
-            let close_tag = format!("</{}>", tag_name);
-            let Some(close_pos) = content[tag_end..].find(&close_tag) else { 
-                pos = tag_end + 1;
-                continue;
-            };
-            let close_pos = tag_end + close_pos;
-            
-            // Get inner content
-            let inner = &content[tag_end+1..close_pos];
-            let value = parse_element(inner);
-            
-            // Handle duplicate keys (convert to array)
-            if let Some(existing) = result.get_mut(tag_name) {
-                match existing {
-                    Value::Array(arr) => arr.push(value),
-                    _ => {
-                        let old = existing.take();
-                        *existing = Value::Array(vec![old, value]);
+    use quick_xml::events::Event;
+    use quick_xml::Reader;
+    use serde_json::{Map, Value};
+
+    fn parse_element(reader: &mut Reader<&[u8]>) -> Result<Value> {
+        let mut map: Map<String, Value> = Map::new();
+        let mut buf = Vec::new();
+        let mut current_text = String::new();
+
+        loop {
+            match reader.read_event_into(&mut buf) {
+                Ok(Event::Start(e)) => {
+                    let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                    let child_value = parse_element(reader)?;
+
+                    // Handle duplicate keys by converting to array
+                    if let Some(existing) = map.get_mut(&tag_name) {
+                        match existing {
+                            Value::Array(arr) => arr.push(child_value),
+                            _ => {
+                                let old = existing.take();
+                                *existing = Value::Array(vec![old, child_value]);
+                            }
+                        }
+                    } else {
+                        map.insert(tag_name, child_value);
                     }
                 }
-            } else {
-                result.insert(tag_name.to_string(), value);
+                Ok(Event::Text(e)) => {
+                    let text = e.unescape().unwrap_or_default().trim().to_string();
+                    if !text.is_empty() {
+                        current_text = text;
+                    }
+                }
+                Ok(Event::End(_)) => {
+                    break;
+                }
+                Ok(Event::Empty(e)) => {
+                    let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                    map.insert(tag_name, Value::Null);
+                }
+                Ok(Event::Eof) => break,
+                Err(e) => return Err(anyhow!("XML parse error: {}", e)),
+                _ => {}
             }
-            
-            pos = close_pos + close_tag.len();
+            buf.clear();
         }
-        
-        if result.is_empty() && !content.starts_with('<') {
-            Value::String(content.to_string())
+
+        // If we only collected text and no child elements, return the text
+        if map.is_empty() && !current_text.is_empty() {
+            Ok(Value::String(current_text))
         } else {
-            Value::Object(result)
+            Ok(Value::Object(map))
         }
     }
-    
-    Ok(parse_element(xml))
+
+    let mut reader = Reader::from_str(xml);
+    reader.config_mut().trim_text(true);
+
+    let mut root_map: Map<String, Value> = Map::new();
+    let mut buf = Vec::new();
+
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => {
+                let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                let child_value = parse_element(&mut reader)?;
+                root_map.insert(tag_name, child_value);
+            }
+            Ok(Event::Eof) => break,
+            Ok(_) => {}
+            Err(e) => return Err(anyhow!("XML parse error: {}", e)),
+        }
+        buf.clear();
+    }
+
+    Ok(Value::Object(root_map))
 }

@@ -244,6 +244,171 @@ pub async fn execute_action(
 }
 
 // =============================================================================
+// Describe Functions (single resource details)
+// =============================================================================
+
+/// Fetch full details for a single resource by ID
+pub async fn describe_resource(
+    resource_key: &str,
+    clients: &AwsClients,
+    resource_id: &str,
+) -> Result<Value> {
+    tracing::debug!("Describing resource: {} with id: {}", resource_key, resource_id);
+    
+    match resource_key {
+        "ec2-instances" => {
+            let xml = clients.http.query_request("ec2", "DescribeInstances", &[
+                ("InstanceId.1", resource_id)
+            ]).await?;
+            let json = xml_to_json(&xml)?;
+            
+            // Navigate to the instance data
+            if let Some(reservations) = json.pointer("/DescribeInstancesResponse/reservationSet/item") {
+                let reservation = match reservations {
+                    Value::Array(arr) => arr.first().cloned(),
+                    obj @ Value::Object(_) => Some(obj.clone()),
+                    _ => None,
+                };
+                
+                if let Some(res) = reservation {
+                    if let Some(instance) = res.pointer("/instancesSet/item") {
+                        let instance = match instance {
+                            Value::Array(arr) => arr.first().cloned().unwrap_or(Value::Null),
+                            obj @ Value::Object(_) => obj.clone(),
+                            _ => Value::Null,
+                        };
+                        return Ok(instance);
+                    }
+                }
+            }
+            Err(anyhow!("Instance not found"))
+        }
+        
+        "s3-buckets" => {
+            // S3 doesn't have a single bucket describe, return basic info
+            Ok(json!({
+                "BucketName": resource_id,
+                "Note": "Use AWS Console for full bucket details"
+            }))
+        }
+        
+        "lambda-functions" => {
+            let response = clients.http.rest_json_request(
+                "lambda",
+                "GET",
+                &format!("/2015-03-31/functions/{}", resource_id),
+                None
+            ).await?;
+            let json: Value = serde_json::from_str(&response)?;
+            Ok(json)
+        }
+        
+        "rds-instances" => {
+            let xml = clients.http.query_request("rds", "DescribeDBInstances", &[
+                ("DBInstanceIdentifier", resource_id)
+            ]).await?;
+            let json = xml_to_json(&xml)?;
+            
+            if let Some(instances) = json.pointer("/DescribeDBInstancesResponse/DescribeDBInstancesResult/DBInstances/DBInstance") {
+                let instance = match instances {
+                    Value::Array(arr) => arr.first().cloned().unwrap_or(Value::Null),
+                    obj @ Value::Object(_) => obj.clone(),
+                    _ => Value::Null,
+                };
+                return Ok(instance);
+            }
+            Err(anyhow!("RDS instance not found"))
+        }
+        
+        "iam-users" => {
+            let xml = clients.http.query_request("iam", "GetUser", &[
+                ("UserName", resource_id)
+            ]).await?;
+            let json = xml_to_json(&xml)?;
+            
+            if let Some(user) = json.pointer("/GetUserResponse/GetUserResult/User") {
+                return Ok(user.clone());
+            }
+            Err(anyhow!("IAM user not found"))
+        }
+        
+        "iam-roles" => {
+            let xml = clients.http.query_request("iam", "GetRole", &[
+                ("RoleName", resource_id)
+            ]).await?;
+            let json = xml_to_json(&xml)?;
+            
+            if let Some(role) = json.pointer("/GetRoleResponse/GetRoleResult/Role") {
+                return Ok(role.clone());
+            }
+            Err(anyhow!("IAM role not found"))
+        }
+        
+        "dynamodb-tables" => {
+            let response = clients.http.json_request(
+                "dynamodb",
+                "DescribeTable",
+                &json!({ "TableName": resource_id }).to_string()
+            ).await?;
+            let json: Value = serde_json::from_str(&response)?;
+            Ok(json.get("Table").cloned().unwrap_or(json))
+        }
+        
+        "eks-clusters" => {
+            let response = clients.http.rest_json_request(
+                "eks",
+                "GET",
+                &format!("/clusters/{}", resource_id),
+                None
+            ).await?;
+            let json: Value = serde_json::from_str(&response)?;
+            Ok(json.get("cluster").cloned().unwrap_or(json))
+        }
+        
+        "ecs-clusters" => {
+            let response = clients.http.json_request(
+                "ecs",
+                "DescribeClusters",
+                &json!({ "clusters": [resource_id] }).to_string()
+            ).await?;
+            let json: Value = serde_json::from_str(&response)?;
+            if let Some(clusters) = json.get("clusters").and_then(|c| c.as_array()) {
+                if let Some(cluster) = clusters.first() {
+                    return Ok(cluster.clone());
+                }
+            }
+            Err(anyhow!("ECS cluster not found"))
+        }
+        
+        "secretsmanager-secrets" => {
+            let response = clients.http.json_request(
+                "secretsmanager",
+                "DescribeSecret",
+                &json!({ "SecretId": resource_id }).to_string()
+            ).await?;
+            let json: Value = serde_json::from_str(&response)?;
+            Ok(json)
+        }
+        
+        "kms-keys" => {
+            let response = clients.http.json_request(
+                "kms",
+                "DescribeKey",
+                &json!({ "KeyId": resource_id }).to_string()
+            ).await?;
+            let json: Value = serde_json::from_str(&response)?;
+            Ok(json.get("KeyMetadata").cloned().unwrap_or(json))
+        }
+        
+        // Default: return an error indicating describe is not implemented
+        _ => {
+            tracing::debug!("No describe implementation for {}, falling back to list data", resource_key);
+            Err(anyhow!("Describe not implemented for {}", resource_key))
+        }
+    }
+}
+
+// =============================================================================
 // List/Describe Functions (read operations)
 // =============================================================================
 

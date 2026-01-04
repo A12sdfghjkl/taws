@@ -52,11 +52,11 @@ pub fn render(f: &mut Frame, splash: &SplashState) {
     let content = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(9),  // Big logo
-            Constraint::Length(2),  // Spacer
-            Constraint::Length(1),  // Loading bar
-            Constraint::Length(1),  // Spacer
-            Constraint::Length(1),  // Status message
+            Constraint::Length(9), // Big logo
+            Constraint::Length(2), // Spacer
+            Constraint::Length(1), // Loading bar
+            Constraint::Length(1), // Spacer
+            Constraint::Length(1), // Status message
         ])
         .split(center_area);
 
@@ -74,37 +74,46 @@ fn render_big_logo(f: &mut Frame, area: Rect) {
     let logo_lines = vec![
         Line::from(Span::styled(
             r"  ████████╗ █████╗ ██╗    ██╗███████╗",
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
         )),
         Line::from(Span::styled(
             r"  ╚══██╔══╝██╔══██╗██║    ██║██╔════╝",
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
         )),
         Line::from(Span::styled(
             r"     ██║   ███████║██║ █╗ ██║███████╗",
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
         )),
         Line::from(Span::styled(
             r"     ██║   ██╔══██║██║███╗██║╚════██║",
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
         )),
         Line::from(Span::styled(
             r"     ██║   ██║  ██║╚███╔███╔╝███████║",
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
         )),
         Line::from(Span::styled(
             r"     ╚═╝   ╚═╝  ╚═╝ ╚══╝╚══╝ ╚══════╝",
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
         Line::from(Span::styled(
             "Terminal UI for AWS",
             Style::default().fg(Color::DarkGray),
         )),
-        Line::from(Span::styled(
-            "v0.1.0",
-            Style::default().fg(Color::DarkGray),
-        )),
+        Line::from(Span::styled("v0.1.0", Style::default().fg(Color::DarkGray))),
     ];
 
     let paragraph = Paragraph::new(logo_lines).alignment(Alignment::Center);
@@ -119,14 +128,8 @@ fn render_loading_bar(f: &mut Frame, splash: &SplashState, area: Rect) {
 
     let bar = Line::from(vec![
         Span::styled("  [", Style::default().fg(Color::DarkGray)),
-        Span::styled(
-            "█".repeat(filled),
-            Style::default().fg(Color::Cyan),
-        ),
-        Span::styled(
-            "░".repeat(empty),
-            Style::default().fg(Color::DarkGray),
-        ),
+        Span::styled("█".repeat(filled), Style::default().fg(Color::Cyan)),
+        Span::styled("░".repeat(empty), Style::default().fg(Color::DarkGray)),
         Span::styled("]", Style::default().fg(Color::DarkGray)),
         Span::styled(
             format!(" {}%", (progress * 100.0) as u8),
@@ -143,14 +146,8 @@ fn render_status(f: &mut Frame, splash: &SplashState, area: Rect) {
     let spinner = spinner_chars[splash.spinner_frame % spinner_chars.len()];
 
     let status = Line::from(vec![
-        Span::styled(
-            format!("{} ", spinner),
-            Style::default().fg(Color::Yellow),
-        ),
-        Span::styled(
-            &splash.current_message,
-            Style::default().fg(Color::White),
-        ),
+        Span::styled(format!("{} ", spinner), Style::default().fg(Color::Yellow)),
+        Span::styled(&splash.current_message, Style::default().fg(Color::White)),
     ]);
 
     let paragraph = Paragraph::new(status).alignment(Alignment::Center);

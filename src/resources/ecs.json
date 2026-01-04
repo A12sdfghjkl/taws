@@ -20,7 +20,7 @@
         { "shortcut": "t", "display_name": "Tasks", "resource_key": "ecs-tasks", "parent_id_field": "clusterArn", "filter_param": "cluster" }
       ],
       "actions": [
-        { "key": "D", "display_name": "Delete Cluster", "sdk_method": "delete_cluster", "needs_confirm": true }
+        { "key": "ctrl+d", "display_name": "Delete Cluster", "shortcut": "ctrl+d", "sdk_method": "delete_cluster", "confirm": { "message": "Delete ECS cluster", "default_yes": false, "destructive": true } }
       ]
     },
     "ecs-services": {
@@ -41,7 +41,7 @@
       ],
       "sub_resources": [],
       "actions": [
-        { "key": "D", "display_name": "Delete Service", "sdk_method": "delete_service", "needs_confirm": true }
+        { "key": "ctrl+d", "display_name": "Delete Service", "shortcut": "ctrl+d", "sdk_method": "delete_service", "confirm": { "message": "Delete ECS service", "default_yes": false, "destructive": true } }
       ]
     },
     "ecs-tasks": {
@@ -62,7 +62,7 @@
       ],
       "sub_resources": [],
       "actions": [
-        { "key": "S", "display_name": "Stop Task", "sdk_method": "stop_task", "needs_confirm": true }
+        { "key": "S", "display_name": "Stop Task", "shortcut": "S", "sdk_method": "stop_task", "confirm": { "message": "Stop ECS task", "default_yes": false } }
       ]
     }
   }

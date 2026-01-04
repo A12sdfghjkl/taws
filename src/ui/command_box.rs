@@ -69,7 +69,7 @@ pub fn render(f: &mut Frame, app: &App) {
         .border_style(Style::default().fg(Color::Cyan));
 
     let inner_height = suggestions_block.inner(chunks[1]).height as usize;
-    
+
     // Calculate scroll offset to keep selected item visible
     let scroll_offset = if app.command_suggestions.is_empty() {
         0
@@ -96,10 +96,7 @@ pub fn render(f: &mut Frame, app: &App) {
                 Style::default().fg(Color::White)
             };
 
-            Line::from(vec![
-                Span::raw("  "),
-                Span::styled(suggestion, style),
-            ])
+            Line::from(vec![Span::raw("  "), Span::styled(suggestion, style)])
         })
         .collect();
 
@@ -157,9 +154,9 @@ fn filter_box_area(r: Rect) -> Rect {
     let vertical = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(7),  // Skip header
-            Constraint::Length(3),  // Filter box height
-            Constraint::Min(0),     // Rest
+            Constraint::Length(7), // Skip header
+            Constraint::Length(3), // Filter box height
+            Constraint::Min(0),    // Rest
         ])
         .split(r);
 

@@ -14,8 +14,8 @@
       ],
       "sub_resources": [],
       "actions": [
-        { "key": "P", "display_name": "Purge Queue", "sdk_method": "purge_queue", "needs_confirm": true },
-        { "key": "D", "display_name": "Delete Queue", "sdk_method": "delete_queue", "needs_confirm": true }
+        { "key": "P", "display_name": "Purge Queue", "shortcut": "P", "sdk_method": "purge_queue", "confirm": { "message": "Purge SQS queue", "default_yes": false, "destructive": true } },
+        { "key": "ctrl+d", "display_name": "Delete Queue", "shortcut": "ctrl+d", "sdk_method": "delete_queue", "confirm": { "message": "Delete SQS queue", "default_yes": false, "destructive": true } }
       ]
     }
   }

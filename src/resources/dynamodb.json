@@ -14,7 +14,7 @@
       ],
       "sub_resources": [],
       "actions": [
-        { "key": "D", "display_name": "Delete Table", "sdk_method": "delete_table", "needs_confirm": true }
+        { "key": "ctrl+d", "display_name": "Delete Table", "shortcut": "ctrl+d", "sdk_method": "delete_table", "confirm": { "message": "Delete DynamoDB table", "default_yes": false, "destructive": true } }
       ]
     }
   }
