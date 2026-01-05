@@ -1,7 +1,15 @@
 [package]
 name = "taws"
-version = "0.1.0"
+version = "v1.0.0"
 edition = "2021"
+description = "Terminal UI for AWS - navigate, observe, and manage AWS resources"
+license = "MIT"
+repository = "https://github.com/huseyinbabal/taws"
+homepage = "https://github.com/huseyinbabal/taws"
+readme = "README.md"
+keywords = ["aws", "tui", "terminal", "cloud", "infrastructure"]
+categories = ["command-line-utilities", "development-tools"]
+authors = ["Huseyin Babal"]
 
 [dependencies]
 # TUI
