@@ -88,6 +88,19 @@ fn render_context_column(f: &mut Frame, app: &App, area: Rect) {
         ]));
     }
 
+    // Show custom endpoint indicator
+    if app.endpoint_url.is_some() {
+        lines.push(Line::from(vec![
+            Span::styled("Endpoint:", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                " CUSTOM",
+                Style::default()
+                    .fg(Color::Magenta)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]));
+    }
+
     let paragraph = Paragraph::new(lines);
     f.render_widget(paragraph, area);
 }

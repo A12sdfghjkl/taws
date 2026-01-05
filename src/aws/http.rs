@@ -304,20 +304,23 @@ pub struct AwsHttpClient {
     http_client: Client,
     credentials: Credentials,
     region: String,
+    endpoint_url: Option<String>,
 }
 
 impl AwsHttpClient {
     /// Create a new AWS HTTP client
-    pub fn new(credentials: Credentials, region: &str) -> Self {
+    pub fn new(credentials: Credentials, region: &str, endpoint_url: Option<String>) -> Self {
         debug!(
-            "Creating AWS HTTP client for region: {}, access_key: {}",
+            "Creating AWS HTTP client for region: {}, access_key: {}, endpoint_url: {:?}",
             region,
-            mask_credential(&credentials.access_key_id)
+            mask_credential(&credentials.access_key_id),
+            endpoint_url
         );
         Self {
             http_client: Client::new(),
             credentials,
             region: region.to_string(),
+            endpoint_url,
         }
     }
 
@@ -338,6 +341,11 @@ impl AwsHttpClient {
 
     /// Get the endpoint URL for a service
     fn get_endpoint(&self, service: &ServiceDefinition) -> String {
+        // If custom endpoint is set, use it for ALL services (LocalStack, etc.)
+        if let Some(ref endpoint) = self.endpoint_url {
+            return endpoint.clone();
+        }
+
         let region = if service.is_global {
             "us-east-1"
         } else {

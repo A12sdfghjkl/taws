@@ -110,6 +110,9 @@ pub struct App {
     
     // Warning message for modal dialog
     pub warning_message: Option<String>,
+    
+    // Custom endpoint URL (for LocalStack, etc.)
+    pub endpoint_url: Option<String>,
 }
 
 impl App {
@@ -123,6 +126,7 @@ impl App {
         initial_items: Vec<Value>,
         config: Config,
         readonly: bool,
+        endpoint_url: Option<String>,
     ) -> Self {
         let filtered_items = initial_items.clone();
         
@@ -157,6 +161,7 @@ impl App {
             last_key_press: None,
             readonly,
             warning_message: None,
+            endpoint_url,
         }
     }
     
@@ -756,7 +761,7 @@ impl App {
     }
 
     pub async fn switch_profile(&mut self, profile: &str) -> Result<()> {
-        let (new_clients, actual_region) = AwsClients::new(profile, &self.region).await?;
+        let (new_clients, actual_region) = AwsClients::new(profile, &self.region, self.endpoint_url.clone()).await?;
         self.clients = new_clients;
         self.profile = profile.to_string();
         self.region = actual_region.clone();

@@ -16,9 +16,9 @@ pub struct AwsClients {
 
 impl AwsClients {
     /// Create AWS client for a given profile and region
-    pub async fn new(profile: &str, region: &str) -> Result<(Self, String)> {
+    pub async fn new(profile: &str, region: &str, endpoint_url: Option<String>) -> Result<(Self, String)> {
         let credentials = load_credentials(profile)?;
-        let http = AwsHttpClient::new(credentials, region);
+        let http = AwsHttpClient::new(credentials, region, endpoint_url);
 
         let client = Self {
             http,

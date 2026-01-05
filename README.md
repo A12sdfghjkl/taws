@@ -152,6 +152,12 @@ taws --log-level debug
 
 # Run in read-only mode (blocks all write operations)
 taws --readonly
+
+# Use with LocalStack or custom endpoint
+taws --endpoint-url http://localhost:4566
+
+# Or via environment variable
+AWS_ENDPOINT_URL=http://localhost:4566 taws
 ```
 
 ### Log File Locations

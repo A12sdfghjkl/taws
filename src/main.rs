@@ -48,6 +48,10 @@ struct Args {
     /// Run in read-only mode (block all write operations)
     #[arg(long)]
     readonly: bool,
+
+    /// Custom AWS endpoint URL (for LocalStack, etc.). Also reads from AWS_ENDPOINT_URL env var.
+    #[arg(long)]
+    endpoint_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -200,7 +204,11 @@ where
     let region = args.region.clone()
         .unwrap_or_else(|| config.effective_region());
     
-    tracing::info!("Using profile: {}, region: {}", profile, region);
+    // Get endpoint URL from CLI arg or environment variable
+    let endpoint_url = args.endpoint_url.clone()
+        .or_else(|| std::env::var("AWS_ENDPOINT_URL").ok());
+    
+    tracing::info!("Using profile: {}, region: {}, endpoint_url: {:?}", profile, region, endpoint_url);
     
     splash.set_message(&format!("Loading AWS config [profile: {}]", profile));
     terminal.draw(|f| render_splash(f, &splash))?;
@@ -214,7 +222,7 @@ where
     splash.set_message(&format!("Connecting to AWS services [{}]", region));
     terminal.draw(|f| render_splash(f, &splash))?;
 
-    let (clients, actual_region) = aws::client::AwsClients::new(&profile, &region).await?;
+    let (clients, actual_region) = aws::client::AwsClients::new(&profile, &region, endpoint_url.clone()).await?;
     splash.complete_step();
 
     if check_abort()? {
@@ -265,6 +273,7 @@ where
         instances,
         config,
         args.readonly,
+        endpoint_url,
     );
 
     // Set initial error if any
