@@ -1,14 +1,47 @@
 //! Resource Registry - Load resource definitions from JSON
 //!
-//! This module loads all AWS resource definitions from resources.json
+//! This module loads all AWS resource definitions from embedded JSON files
 //! and provides lookup functions for the rest of the application.
 
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
-use std::fs;
-use std::path::Path;
 use std::sync::OnceLock;
+
+/// Embedded resource JSON files (compiled into the binary)
+const RESOURCE_FILES: &[&str] = &[
+    include_str!("../resources/acm.json"),
+    include_str!("../resources/apigateway.json"),
+    include_str!("../resources/athena.json"),
+    include_str!("../resources/autoscaling.json"),
+    include_str!("../resources/cloudformation.json"),
+    include_str!("../resources/cloudfront.json"),
+    include_str!("../resources/cloudtrail.json"),
+    include_str!("../resources/cloudwatch.json"),
+    include_str!("../resources/codebuild.json"),
+    include_str!("../resources/codepipeline.json"),
+    include_str!("../resources/cognito.json"),
+    include_str!("../resources/common.json"),
+    include_str!("../resources/dynamodb.json"),
+    include_str!("../resources/ec2.json"),
+    include_str!("../resources/ecr.json"),
+    include_str!("../resources/ecs.json"),
+    include_str!("../resources/eks.json"),
+    include_str!("../resources/elasticache.json"),
+    include_str!("../resources/eventbridge.json"),
+    include_str!("../resources/iam.json"),
+    include_str!("../resources/kms.json"),
+    include_str!("../resources/lambda.json"),
+    include_str!("../resources/rds.json"),
+    include_str!("../resources/route53.json"),
+    include_str!("../resources/s3.json"),
+    include_str!("../resources/secretsmanager.json"),
+    include_str!("../resources/sns.json"),
+    include_str!("../resources/sqs.json"),
+    include_str!("../resources/ssm.json"),
+    include_str!("../resources/sts.json"),
+    include_str!("../resources/vpc.json"),
+];
 
 /// Color definition from JSON
 #[derive(Debug, Clone, Deserialize)]
@@ -127,7 +160,7 @@ pub struct ResourceConfig {
 /// Global registry loaded from JSON
 static REGISTRY: OnceLock<ResourceConfig> = OnceLock::new();
 
-/// Get the resource registry (loads from JSON on first access)
+/// Get the resource registry (loads from embedded JSON on first access)
 pub fn get_registry() -> &'static ResourceConfig {
     REGISTRY.get_or_init(|| {
         let mut final_config = ResourceConfig {
@@ -135,22 +168,9 @@ pub fn get_registry() -> &'static ResourceConfig {
             resources: HashMap::new(),
         };
 
-        let resources_dir = Path::new("src/resources");
-        let entries = fs::read_dir(resources_dir)
-            .unwrap_or_else(|e| panic!("Failed to read {}: {}", resources_dir.display(), e));
-
-        let mut json_files: Vec<_> = entries
-            .filter_map(|e| e.ok())
-            .map(|e| e.path())
-            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("json"))
-            .collect();
-        json_files.sort();
-
-        for path in json_files {
-            let content = fs::read_to_string(&path)
-                .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
-            let partial: ResourceConfig = serde_json::from_str(&content)
-                .unwrap_or_else(|e| panic!("Failed to parse {}: {}", path.display(), e));
+        for content in RESOURCE_FILES {
+            let partial: ResourceConfig = serde_json::from_str(content)
+                .unwrap_or_else(|e| panic!("Failed to parse embedded resource JSON: {}", e));
             final_config.color_maps.extend(partial.color_maps);
             final_config.resources.extend(partial.resources);
         }
