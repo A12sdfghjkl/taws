@@ -1,12 +1,17 @@
 use crate::app::{App, Mode, SsoLoginState};
 use crate::aws::sso;
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use std::time::Duration;
 
 pub async fn handle_events(app: &mut App) -> Result<bool> {
     if event::poll(Duration::from_millis(100))? {
         if let Event::Key(key) = event::read()? {
+            // Only handle key press events, not release or repeat
+            // This fixes double key presses on Windows
+            if key.kind != KeyEventKind::Press {
+                return Ok(false);
+            }
             return handle_key_event(app, key).await;
         }
     }
