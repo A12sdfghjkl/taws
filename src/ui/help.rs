@@ -32,6 +32,7 @@ pub fn render(f: &mut Frame, _app: &App) {
         create_section("EC2 Actions"),
         create_key_line("s", "Start instance"),
         create_key_line("S", "Stop instance"),
+        create_key_line("r", "Reboot instance"),
         create_key_line("Ctrl+d", "Terminate instance"),
         Line::from(""),
         create_section("Log Tail Mode"),

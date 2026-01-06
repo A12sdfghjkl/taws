@@ -277,6 +277,12 @@ mod tests {
             .find(|a| a.sdk_method == "start_instance");
         assert!(start_action.is_some(), "EC2 should have start action");
 
+        let reboot_action = resource
+            .actions
+            .iter()
+            .find(|a| a.sdk_method == "reboot_instance");
+        assert!(reboot_action.is_some(), "EC2 should have reboot action");
+
         let terminate_action = resource
             .actions
             .iter()

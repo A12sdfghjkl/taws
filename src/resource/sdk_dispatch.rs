@@ -122,6 +122,12 @@ pub async fn execute_action(
             ]).await?;
             Ok(())
         }
+        ("ec2", "reboot_instance") => {
+            clients.http.query_request("ec2", "RebootInstances", &[
+                ("InstanceId.1", resource_id)
+            ]).await?;
+            Ok(())
+        }
         ("ec2", "terminate_instance") => {
             clients.http.query_request("ec2", "TerminateInstances", &[
                 ("InstanceId.1", resource_id)

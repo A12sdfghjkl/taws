@@ -22,6 +22,7 @@
       "actions": [
         { "key": "s", "display_name": "Start", "shortcut": "s", "sdk_method": "start_instance" },
         { "key": "S", "display_name": "Stop", "shortcut": "S", "sdk_method": "stop_instance", "confirm": { "message": "Stop instance", "default_yes": false } },
+        { "key": "r", "display_name": "Reboot", "shortcut": "r", "sdk_method": "reboot_instance" },
         { "key": "ctrl+d", "display_name": "Terminate", "shortcut": "ctrl+d", "sdk_method": "terminate_instance", "confirm": { "message": "Terminate instance", "default_yes": false, "destructive": true } }
       ]
     }
