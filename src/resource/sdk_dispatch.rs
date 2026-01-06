@@ -1094,8 +1094,16 @@ pub async fn invoke_sdk(
         // ECS Operations (JSON protocol)
         // =====================================================================
         ("ecs", "list_clusters_with_details") => {
+            // Build request with pagination support
+            let page_token = params.get("_page_token").and_then(|v| v.as_str());
+            let request_body = if let Some(token) = page_token {
+                json!({ "nextToken": token, "maxResults": 100 }).to_string()
+            } else {
+                json!({ "maxResults": 100 }).to_string()
+            };
+            
             // List clusters
-            let list_response = clients.http.json_request("ecs", "ListClusters", "{}").await?;
+            let list_response = clients.http.json_request("ecs", "ListClusters", &request_body).await?;
             let list_json: Value = serde_json::from_str(&list_response)?;
             let cluster_arns = list_json.get("clusterArns").and_then(|v| v.as_array()).cloned().unwrap_or_default();
             
@@ -1120,7 +1128,14 @@ pub async fn invoke_sdk(
                 })
             }).collect();
             
-            Ok(json!({ "clusters": result }))
+            // Include next_token in response for pagination
+            let next_token = list_json.get("nextToken").and_then(|v| v.as_str());
+            let mut response = json!({ "clusters": result });
+            if let Some(token) = next_token {
+                response["_next_token"] = json!(token);
+            }
+            
+            Ok(response)
         }
 
         ("ecs", "list_services_with_details") => {
@@ -1129,14 +1144,26 @@ pub async fn invoke_sdk(
                 return Ok(json!({ "services": [] }));
             }
             
-            let list_response = clients.http.json_request("ecs", "ListServices", &json!({
-                "cluster": cluster
-            }).to_string()).await?;
+            // Build request with pagination support
+            let page_token = params.get("_page_token").and_then(|v| v.as_str());
+            let request_body = if let Some(token) = page_token {
+                json!({ "cluster": cluster, "nextToken": token, "maxResults": 100 }).to_string()
+            } else {
+                json!({ "cluster": cluster, "maxResults": 100 }).to_string()
+            };
+            
+            let list_response = clients.http.json_request("ecs", "ListServices", &request_body).await?;
             let list_json: Value = serde_json::from_str(&list_response)?;
             let service_arns = list_json.get("serviceArns").and_then(|v| v.as_array()).cloned().unwrap_or_default();
             
             if service_arns.is_empty() {
-                return Ok(json!({ "services": [] }));
+                // Still return next_token if present (edge case: all services deleted but more pages exist)
+                let next_token = list_json.get("nextToken").and_then(|v| v.as_str());
+                let mut response = json!({ "services": [] });
+                if let Some(token) = next_token {
+                    response["_next_token"] = json!(token);
+                }
+                return Ok(response);
             }
             
             let desc_response = clients.http.json_request("ecs", "DescribeServices", &json!({
@@ -1158,7 +1185,14 @@ pub async fn invoke_sdk(
                 })
             }).collect();
             
-            Ok(json!({ "services": result }))
+            // Include next_token in response for pagination
+            let next_token = list_json.get("nextToken").and_then(|v| v.as_str());
+            let mut response = json!({ "services": result });
+            if let Some(token) = next_token {
+                response["_next_token"] = json!(token);
+            }
+            
+            Ok(response)
         }
 
         ("ecs", "list_tasks_with_details") => {
@@ -1167,14 +1201,25 @@ pub async fn invoke_sdk(
                 return Ok(json!({ "tasks": [] }));
             }
             
-            let list_response = clients.http.json_request("ecs", "ListTasks", &json!({
-                "cluster": cluster
-            }).to_string()).await?;
+            // Build request with pagination support
+            let page_token = params.get("_page_token").and_then(|v| v.as_str());
+            let request_body = if let Some(token) = page_token {
+                json!({ "cluster": cluster, "nextToken": token, "maxResults": 100 }).to_string()
+            } else {
+                json!({ "cluster": cluster, "maxResults": 100 }).to_string()
+            };
+            
+            let list_response = clients.http.json_request("ecs", "ListTasks", &request_body).await?;
             let list_json: Value = serde_json::from_str(&list_response)?;
             let task_arns = list_json.get("taskArns").and_then(|v| v.as_array()).cloned().unwrap_or_default();
             
             if task_arns.is_empty() {
-                return Ok(json!({ "tasks": [] }));
+                let next_token = list_json.get("nextToken").and_then(|v| v.as_str());
+                let mut response = json!({ "tasks": [] });
+                if let Some(token) = next_token {
+                    response["_next_token"] = json!(token);
+                }
+                return Ok(response);
             }
             
             let desc_response = clients.http.json_request("ecs", "DescribeTasks", &json!({
@@ -1195,7 +1240,14 @@ pub async fn invoke_sdk(
                 })
             }).collect();
             
-            Ok(json!({ "tasks": result }))
+            // Include next_token in response for pagination
+            let next_token = list_json.get("nextToken").and_then(|v| v.as_str());
+            let mut response = json!({ "tasks": result });
+            if let Some(token) = next_token {
+                response["_next_token"] = json!(token);
+            }
+            
+            Ok(response)
         }
 
         // =====================================================================
