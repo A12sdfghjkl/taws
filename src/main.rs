@@ -289,6 +289,7 @@ where
         ClientResult::Ok(clients, actual_region) => (clients, actual_region),
         ClientResult::SsoLoginRequired { profile, sso_session, region, endpoint_url } => {
             // SSO login required - return early to handle in separate flow
+            tracing::debug!("SSO login required for profile '{}', session '{}' - showing login dialog", profile, sso_session);
             return Ok(Some(InitResult::SsoRequired {
                 profile,
                 sso_session,
@@ -367,6 +368,8 @@ where
     B::Error: Send + Sync + 'static,
 {
     use aws::sso;
+    
+    tracing::info!("Entering SSO login flow for profile '{}', session '{}'", profile, sso_session);
     
     // Create a minimal app state for the SSO dialog
     let mut sso_state = SsoLoginState::Prompt {
