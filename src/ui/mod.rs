@@ -9,7 +9,6 @@ pub mod splash;
 
 use crate::app::{App, Mode};
 use crate::resource::{extract_json_value, get_color_for_value, ColumnDef};
-use fuzzy_matcher::skim::SkimMatcherV2;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -116,7 +115,6 @@ fn render_dynamic_table(f: &mut Frame, app: &App, area: Rect) {
     };
 
     let query = app.filter_text.trim();
-    let matcher = SkimMatcherV2::default().ignore_case();
     let highlight_filter_matches = !query.is_empty();
 
     // Build title with count, region info, and pagination
@@ -206,7 +204,13 @@ fn render_dynamic_table(f: &mut Frame, app: &App, area: Rect) {
                     let match_style = Style::default()
                         .fg(Color::LightGreen)
                         .add_modifier(Modifier::BOLD);
-                    highlight::fuzzy_cell(&display_value, query, &matcher, style, match_style)
+                    highlight::fuzzy_cell(
+                        &display_value,
+                        query,
+                        &app.fuzzy_matcher,
+                        style,
+                        match_style,
+                    )
                 } else {
                     Cell::from(format!(" {}", display_value)).style(style)
                 }

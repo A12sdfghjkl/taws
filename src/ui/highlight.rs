@@ -12,7 +12,7 @@ pub fn fuzzy_cell(
     base_style: Style,
     match_style: Style,
 ) -> Cell<'static> {
-    if query.trim().is_empty() {
+    if query.is_empty() {
         return Cell::from(format!(" {}", display_value)).style(base_style);
     }
 

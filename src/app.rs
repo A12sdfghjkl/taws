@@ -125,6 +125,9 @@ pub struct App {
     
     // Log tail state
     pub log_tail_state: Option<LogTailState>,
+    
+    // Fuzzy matcher for filtering (reused to avoid repeated allocations)
+    pub fuzzy_matcher: SkimMatcherV2,
 }
 
 /// Pagination state for resource listings
@@ -271,6 +274,7 @@ impl App {
             sso_state: None,
             pagination: PaginationState::default(),
             log_tail_state: None,
+            fuzzy_matcher: SkimMatcherV2::default().ignore_case(),
         }
     }
     
@@ -497,7 +501,6 @@ impl App {
         if query.is_empty() {
             self.filtered_items = self.items.clone();
         } else {
-            let matcher = SkimMatcherV2::default().ignore_case();
             let resource = self.current_resource();
             self.filtered_items = self
                 .items
@@ -506,11 +509,11 @@ impl App {
                     if let Some(res) = resource {
                         let name = extract_json_value(item, &res.name_field);
                         let id = extract_json_value(item, &res.id_field);
-                        matcher.fuzzy_match(&name, query).is_some()
-                            || matcher.fuzzy_match(&id, query).is_some()
+                        self.fuzzy_matcher.fuzzy_match(&name, query).is_some()
+                            || self.fuzzy_matcher.fuzzy_match(&id, query).is_some()
                     } else {
                         // Fallback: search in JSON string
-                        matcher.fuzzy_match(&item.to_string(), query).is_some()
+                        self.fuzzy_matcher.fuzzy_match(&item.to_string(), query).is_some()
                     }
                 })
                 .cloned()
