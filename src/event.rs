@@ -33,8 +33,8 @@ async fn handle_key_event(app: &mut App, key: KeyEvent) -> Result<bool> {
     }
 }
 
-// Region shortcuts matching the header display
-const REGION_SHORTCUTS: &[&str] = &[
+// Default region shortcuts (used when no recent history)
+const DEFAULT_REGIONS: &[&str] = &[
     "us-east-1",
     "us-west-2",
     "eu-west-1",
@@ -42,6 +42,16 @@ const REGION_SHORTCUTS: &[&str] = &[
     "ap-northeast-1",
     "ap-southeast-1",
 ];
+
+/// Get region for shortcut index (from recent or defaults)
+fn get_region_for_shortcut(app: &App, index: usize) -> Option<String> {
+    let recent = app.config.get_recent_regions();
+    if recent.is_empty() {
+        DEFAULT_REGIONS.get(index).map(|s| s.to_string())
+    } else {
+        recent.get(index).cloned()
+    }
+}
 
 async fn handle_normal_mode(app: &mut App, key: KeyEvent) -> Result<bool> {
     // If filter is active, handle filter input
@@ -55,38 +65,38 @@ async fn handle_normal_mode(app: &mut App, key: KeyEvent) -> Result<bool> {
 
         // Region shortcuts (0-5)
         KeyCode::Char('0') => {
-            if let Some(region) = REGION_SHORTCUTS.first() {
-                app.switch_region(region).await?;
+            if let Some(region) = get_region_for_shortcut(app, 0) {
+                app.switch_region(&region).await?;
                 app.refresh_current().await?;
             }
         }
         KeyCode::Char('1') => {
-            if let Some(region) = REGION_SHORTCUTS.get(1) {
-                app.switch_region(region).await?;
+            if let Some(region) = get_region_for_shortcut(app, 1) {
+                app.switch_region(&region).await?;
                 app.refresh_current().await?;
             }
         }
         KeyCode::Char('2') => {
-            if let Some(region) = REGION_SHORTCUTS.get(2) {
-                app.switch_region(region).await?;
+            if let Some(region) = get_region_for_shortcut(app, 2) {
+                app.switch_region(&region).await?;
                 app.refresh_current().await?;
             }
         }
         KeyCode::Char('3') => {
-            if let Some(region) = REGION_SHORTCUTS.get(3) {
-                app.switch_region(region).await?;
+            if let Some(region) = get_region_for_shortcut(app, 3) {
+                app.switch_region(&region).await?;
                 app.refresh_current().await?;
             }
         }
         KeyCode::Char('4') => {
-            if let Some(region) = REGION_SHORTCUTS.get(4) {
-                app.switch_region(region).await?;
+            if let Some(region) = get_region_for_shortcut(app, 4) {
+                app.switch_region(&region).await?;
                 app.refresh_current().await?;
             }
         }
         KeyCode::Char('5') => {
-            if let Some(region) = REGION_SHORTCUTS.get(5) {
-                app.switch_region(region).await?;
+            if let Some(region) = get_region_for_shortcut(app, 5) {
+                app.switch_region(&region).await?;
                 app.refresh_current().await?;
             }
         }

@@ -119,18 +119,29 @@ fn render_shortcuts_column(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_region_shortcuts(f: &mut Frame, app: &App, area: Rect) {
-    let regions = [
-        ("0", "us-east-1"),
-        ("1", "us-west-2"),
-        ("2", "eu-west-1"),
-        ("3", "eu-central-1"),
-        ("4", "ap-northeast-1"),
-        ("5", "ap-southeast-1"),
+    // Default regions if no recent history
+    const DEFAULT_REGIONS: &[&str] = &[
+        "us-east-1",
+        "us-west-2",
+        "eu-west-1",
+        "eu-central-1",
+        "ap-northeast-1",
+        "ap-southeast-1",
     ];
+
+    // Use recent regions if available, otherwise defaults
+    let recent = app.config.get_recent_regions();
+    let regions: Vec<&str> = if recent.is_empty() {
+        DEFAULT_REGIONS.to_vec()
+    } else {
+        recent.iter().map(|s| s.as_str()).collect()
+    };
 
     let lines: Vec<Line> = regions
         .iter()
-        .map(|(key, region)| {
+        .enumerate()
+        .take(6)
+        .map(|(idx, region)| {
             let is_current = *region == app.region;
             let style = if is_current {
                 Style::default()
@@ -141,7 +152,7 @@ fn render_region_shortcuts(f: &mut Frame, app: &App, area: Rect) {
             };
 
             Line::from(vec![
-                Span::styled(format!("<{}>", key), Style::default().fg(Color::Yellow)),
+                Span::styled(format!("<{}>", idx), Style::default().fg(Color::Yellow)),
                 Span::raw(" "),
                 Span::styled(*region, style),
             ])
