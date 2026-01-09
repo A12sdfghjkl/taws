@@ -17,7 +17,7 @@
       ],
       "sub_resources": [],
       "actions": [
-        { "key": "i", "display_name": "Invoke", "shortcut": "i", "sdk_method": "invoke_function" },
+        { "key": "i", "display_name": "Invoke", "shortcut": "i", "sdk_method": "invoke_function", "confirm": { "message": "Invoke Lambda function", "default_yes": true } },
         { "key": "ctrl+d", "display_name": "Delete", "shortcut": "ctrl+d", "sdk_method": "delete_function", "confirm": { "message": "Delete Lambda function", "default_yes": false, "destructive": true } }
       ]
     }

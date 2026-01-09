@@ -992,10 +992,20 @@ pub async fn invoke_sdk(
         // Lambda Operations (REST-JSON)
         // =====================================================================
         ("lambda", "list_functions") => {
+            // Build URL with pagination support
+            let page_token = params.get("_page_token").and_then(|v| v.as_str());
+            let max_items = params.get("max_items").and_then(|v| v.as_i64()).unwrap_or(50);
+            
+            let path = if let Some(token) = page_token {
+                format!("/2015-03-31/functions?MaxItems={}&Marker={}", max_items, urlencoding::encode(token))
+            } else {
+                format!("/2015-03-31/functions?MaxItems={}", max_items)
+            };
+            
             let response = clients.http.rest_json_request(
                 "lambda",
                 "GET",
-                "/2015-03-31/functions",
+                &path,
                 None
             ).await?;
             let json: Value = serde_json::from_str(&response)?;
@@ -1011,7 +1021,14 @@ pub async fn invoke_sdk(
                 })
             }).collect();
             
-            Ok(json!({ "functions": result }))
+            // Include next_token in response for pagination
+            let next_marker = json.get("NextMarker").and_then(|v| v.as_str());
+            let mut response = json!({ "functions": result });
+            if let Some(marker) = next_marker {
+                response["_next_token"] = json!(marker);
+            }
+            
+            Ok(response)
         }
 
         // =====================================================================
