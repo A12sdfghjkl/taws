@@ -4,6 +4,7 @@
 //! - Environment variables (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN)
 //! - AWS profiles (~/.aws/credentials and ~/.aws/config)
 //! - AWS SSO (IAM Identity Center) via cached tokens
+//! - IAM Role assumption via role_arn and source_profile
 //! - IMDSv2 (EC2 instance metadata)
 
 use anyhow::{anyhow, Result};
@@ -53,6 +54,10 @@ static SSO_CACHE: OnceLock<std::sync::Mutex<HashMap<String, CachedImdsCredential
 
 /// Global cache for Process credentials (keyed by profile name)
 static PROCESS_CACHE: OnceLock<std::sync::Mutex<HashMap<String, CachedImdsCredentials>>> =
+    OnceLock::new();
+
+/// Global cache for Assume Role credentials (keyed by profile name)
+static ASSUME_ROLE_CACHE: OnceLock<std::sync::Mutex<HashMap<String, CachedImdsCredentials>>> =
     OnceLock::new();
 
 /// IMDSv2 metadata endpoint
@@ -121,7 +126,28 @@ fn load_credentials_inner(profile: &str) -> Result<Credentials, CredentialsError
         }
     }
 
-    // 3. Try AWS credentials file
+    // 3. Check if role_arn is configured for this profile (role assumption)
+    if let Some(assume_role_config) = get_assume_role_config(profile) {
+        debug!(
+            "Role assumption configured for profile '{}', role_arn: {}",
+            profile, assume_role_config.role_arn
+        );
+        match load_from_assume_role(profile, &assume_role_config) {
+            Ok(creds) => {
+                debug!(
+                    "Loaded credentials via role assumption for profile '{}'",
+                    profile
+                );
+                return Ok(creds);
+            }
+            Err(e) => {
+                debug!("Role assumption failed for profile '{}': {}", profile, e);
+                return Err(CredentialsError::Other(e));
+            }
+        }
+    }
+
+    // 5. Try AWS credentials file
     if let Ok(creds) = load_from_credentials_file(profile) {
         debug!(
             "Loaded credentials from credentials file for profile '{}'",
@@ -130,7 +156,7 @@ fn load_credentials_inner(profile: &str) -> Result<Credentials, CredentialsError
         return Ok(creds);
     }
 
-    // 4. Try config file with direct credentials
+    // 6. Try config file with direct credentials
     if let Ok(creds) = load_from_config_file(profile) {
         debug!(
             "Loaded credentials from config file for profile '{}'",
@@ -139,7 +165,7 @@ fn load_credentials_inner(profile: &str) -> Result<Credentials, CredentialsError
         return Ok(creds);
     }
 
-    // 5. Try IMDSv2 (EC2 instance metadata) - only for default profile
+    // 7. Try IMDSv2 (EC2 instance metadata) - only for default profile
     if profile == "default" {
         match load_from_imds() {
             Ok(creds) => {
@@ -534,6 +560,285 @@ pub fn list_profiles() -> Vec<String> {
 }
 
 // =============================================================================
+// IAM Role Assumption Support (role_arn + source_profile)
+// =============================================================================
+
+/// Configuration for assuming an IAM role
+#[derive(Debug, Clone)]
+pub struct AssumeRoleConfig {
+    /// The ARN of the role to assume
+    pub role_arn: String,
+    /// The source profile to use for credentials
+    pub source_profile: String,
+    /// Optional external ID for cross-account access
+    pub external_id: Option<String>,
+    /// Optional role session name (defaults to "taws-session")
+    pub role_session_name: Option<String>,
+    /// Optional duration in seconds (defaults to 3600)
+    pub duration_seconds: Option<u32>,
+    /// Region for STS endpoint (from source profile or default)
+    pub region: Option<String>,
+}
+
+/// Check if role assumption is configured for a profile
+fn get_assume_role_config(profile: &str) -> Option<AssumeRoleConfig> {
+    let config_path = aws_config_dir().ok()?.join("config");
+    let content = fs::read_to_string(&config_path).ok()?;
+    let sections = parse_ini_file(&content);
+
+    let section = sections.get(profile)?;
+
+    // Must have role_arn to be a role assumption profile
+    let role_arn = section.get("role_arn")?.clone();
+
+    // source_profile is required for role assumption
+    let source_profile = section.get("source_profile")?.clone();
+
+    Some(AssumeRoleConfig {
+        role_arn,
+        source_profile,
+        external_id: section.get("external_id").cloned(),
+        role_session_name: section.get("role_session_name").cloned(),
+        duration_seconds: section.get("duration_seconds").and_then(|s| s.parse().ok()),
+        region: section.get("region").cloned(),
+    })
+}
+
+/// Load credentials by assuming a role using source profile credentials
+fn load_from_assume_role(profile: &str, config: &AssumeRoleConfig) -> Result<Credentials> {
+    // Check cache first
+    let cache = ASSUME_ROLE_CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
+
+    if let Ok(guard) = cache.lock() {
+        if let Some(cached) = guard.get(profile) {
+            if cached.expiration > Instant::now() + CREDENTIAL_REFRESH_BUFFER {
+                trace!(
+                    "Using cached assume role credentials for profile '{}'",
+                    profile
+                );
+                return Ok(cached.credentials.clone());
+            }
+        }
+    }
+
+    // Recursively load credentials from source profile
+    // This handles chained role assumption (source_profile can also use role_arn)
+    debug!(
+        "Loading source credentials from profile '{}'",
+        config.source_profile
+    );
+    let source_creds = load_credentials(&config.source_profile).map_err(|e| {
+        anyhow!(
+            "Failed to load source credentials from profile '{}': {}",
+            config.source_profile,
+            e
+        )
+    })?;
+
+    // Determine region for STS call
+    let region = config
+        .region
+        .clone()
+        .or_else(|| get_profile_region(&config.source_profile))
+        .unwrap_or_else(|| "us-east-1".to_string());
+
+    // Call STS AssumeRole
+    let (credentials, expiration) = call_sts_assume_role(config, &source_creds, &region)?;
+
+    // Cache the credentials
+    if let Ok(mut guard) = cache.lock() {
+        guard.insert(
+            profile.to_string(),
+            CachedImdsCredentials {
+                credentials: credentials.clone(),
+                expiration,
+            },
+        );
+        debug!(
+            "Cached assume role credentials for profile '{}', expires in {:?}",
+            profile,
+            expiration - Instant::now()
+        );
+    }
+
+    Ok(credentials)
+}
+
+/// Call STS AssumeRole API using signed HTTP request
+fn call_sts_assume_role(
+    config: &AssumeRoleConfig,
+    source_creds: &Credentials,
+    region: &str,
+) -> Result<(Credentials, Instant)> {
+    use aws_sigv4::http_request::{sign, SignableBody, SignableRequest, SigningSettings};
+    use aws_sigv4::sign::v4::SigningParams;
+    use aws_smithy_runtime_api::client::identity::Identity;
+    use std::time::SystemTime;
+
+    let role_session_name = config
+        .role_session_name
+        .clone()
+        .unwrap_or_else(|| "taws-session".to_string());
+    let duration_seconds = config.duration_seconds.unwrap_or(3600);
+
+    // Build STS endpoint
+    let sts_endpoint = format!("https://sts.{}.amazonaws.com/", region);
+
+    // Build query parameters
+    let mut params = vec![
+        ("Action", "AssumeRole"),
+        ("Version", "2011-06-15"),
+        ("RoleArn", &config.role_arn),
+        ("RoleSessionName", &role_session_name),
+    ];
+
+    let duration_str = duration_seconds.to_string();
+    params.push(("DurationSeconds", &duration_str));
+
+    if let Some(ref external_id) = config.external_id {
+        params.push(("ExternalId", external_id));
+    }
+
+    let query_string: String = params
+        .iter()
+        .map(|(k, v)| format!("{}={}", urlencoding::encode(k), urlencoding::encode(v)))
+        .collect::<Vec<_>>()
+        .join("&");
+
+    let url = format!("{}?{}", sts_endpoint, query_string);
+
+    debug!("Calling STS AssumeRole: {}", config.role_arn);
+    trace!("STS URL: {}", url);
+
+    // Parse URL for signing
+    let parsed_url = url::Url::parse(&url)?;
+    let host = parsed_url
+        .host_str()
+        .ok_or_else(|| anyhow!("Invalid STS URL"))?;
+    let path_and_query = if let Some(query) = parsed_url.query() {
+        format!("{}?{}", parsed_url.path(), query)
+    } else {
+        parsed_url.path().to_string()
+    };
+
+    // Build headers for signing
+    let headers = [("host".to_string(), host.to_string())];
+
+    // Create identity for signing
+    let creds = aws_credential_types::Credentials::new(
+        &source_creds.access_key_id,
+        &source_creds.secret_access_key,
+        source_creds.session_token.clone(),
+        None,
+        "taws",
+    );
+    let identity: Identity = creds.into();
+
+    // Create signing params
+    let signing_params = SigningParams::builder()
+        .identity(&identity)
+        .region(region)
+        .name("sts")
+        .time(SystemTime::now())
+        .settings(SigningSettings::default())
+        .build()?
+        .into();
+
+    // Create signable request
+    let signable_request = SignableRequest::new(
+        "POST",
+        &path_and_query,
+        headers.iter().map(|(k, v)| (k.as_str(), v.as_str())),
+        SignableBody::Bytes(&[]),
+    )?;
+
+    // Sign the request
+    let (signing_instructions, _signature) = sign(signable_request, &signing_params)?.into_parts();
+
+    // Build and send the request
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()?;
+
+    let mut request = client.post(&url);
+
+    // Apply signing headers
+    for (name, value) in signing_instructions.headers() {
+        request = request.header(name.to_string(), value.to_string());
+    }
+
+    let response = request.send()?;
+    let status = response.status();
+    let text = response.text()?;
+
+    if !status.is_success() {
+        // Parse error message from XML response
+        let error_msg = parse_sts_error(&text).unwrap_or_else(|| text.clone());
+        return Err(anyhow!("STS AssumeRole failed ({}): {}", status, error_msg));
+    }
+
+    // Parse the XML response
+    parse_assume_role_response(&text)
+}
+
+/// Parse STS error response
+fn parse_sts_error(xml: &str) -> Option<String> {
+    // Simple XML parsing for error message
+    // Format: <Error><Code>...</Code><Message>...</Message></Error>
+    let code_start = xml.find("<Code>")? + 6;
+    let code_end = xml.find("</Code>")?;
+    let code = &xml[code_start..code_end];
+
+    let msg_start = xml.find("<Message>")? + 9;
+    let msg_end = xml.find("</Message>")?;
+    let message = &xml[msg_start..msg_end];
+
+    Some(format!("{}: {}", code, message))
+}
+
+/// Parse AssumeRole XML response
+fn parse_assume_role_response(xml: &str) -> Result<(Credentials, Instant)> {
+    // Parse XML response for credentials
+    // Format: <AssumeRoleResponse><AssumeRoleResult><Credentials>...</Credentials></AssumeRoleResult></AssumeRoleResponse>
+
+    let extract_value = |tag: &str| -> Option<String> {
+        let start_tag = format!("<{}>", tag);
+        let end_tag = format!("</{}>", tag);
+        let start = xml.find(&start_tag)? + start_tag.len();
+        let end = xml.find(&end_tag)?;
+        if start < end {
+            Some(xml[start..end].to_string())
+        } else {
+            None
+        }
+    };
+
+    let access_key_id = extract_value("AccessKeyId")
+        .ok_or_else(|| anyhow!("AccessKeyId not found in AssumeRole response"))?;
+
+    let secret_access_key = extract_value("SecretAccessKey")
+        .ok_or_else(|| anyhow!("SecretAccessKey not found in AssumeRole response"))?;
+
+    let session_token = extract_value("SessionToken")
+        .ok_or_else(|| anyhow!("SessionToken not found in AssumeRole response"))?;
+
+    let expiration_str = extract_value("Expiration")
+        .ok_or_else(|| anyhow!("Expiration not found in AssumeRole response"))?;
+
+    let expiration = parse_expiration(&expiration_str)
+        .unwrap_or_else(|| Instant::now() + Duration::from_secs(3600));
+
+    Ok((
+        Credentials {
+            access_key_id,
+            secret_access_key,
+            session_token: Some(session_token),
+        },
+        expiration,
+    ))
+}
+
+// =============================================================================
 // IMDSv2 (EC2 Instance Metadata Service) Support
 // =============================================================================
 
@@ -868,5 +1173,152 @@ aws_secret_access_key = secret_dev
         assert_eq!(creds.secret_access_key, "test_secret");
         assert_eq!(creds.session_token, Some("test_token".to_string()));
         assert!(exp.is_some());
+    }
+
+    #[test]
+    fn test_parse_assume_role_response() {
+        let xml = r#"
+        <AssumeRoleResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/">
+            <AssumeRoleResult>
+                <Credentials>
+                    <AccessKeyId>ASIATEST123</AccessKeyId>
+                    <SecretAccessKey>testsecret456</SecretAccessKey>
+                    <SessionToken>testsessiontoken789</SessionToken>
+                    <Expiration>2099-01-15T12:00:00Z</Expiration>
+                </Credentials>
+                <AssumedRoleUser>
+                    <AssumedRoleId>AROATEST:taws-session</AssumedRoleId>
+                    <Arn>arn:aws:sts::123456789012:assumed-role/TestRole/taws-session</Arn>
+                </AssumedRoleUser>
+            </AssumeRoleResult>
+        </AssumeRoleResponse>
+        "#;
+
+        let result = parse_assume_role_response(xml);
+        assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
+
+        let (creds, _exp) = result.unwrap();
+        assert_eq!(creds.access_key_id, "ASIATEST123");
+        assert_eq!(creds.secret_access_key, "testsecret456");
+        assert_eq!(creds.session_token, Some("testsessiontoken789".to_string()));
+    }
+
+    #[test]
+    fn test_parse_sts_error() {
+        let xml = r#"
+        <ErrorResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/">
+            <Error>
+                <Code>AccessDenied</Code>
+                <Message>User is not authorized to perform sts:AssumeRole</Message>
+            </Error>
+            <RequestId>12345678-1234-1234-1234-123456789012</RequestId>
+        </ErrorResponse>
+        "#;
+
+        let result = parse_sts_error(xml);
+        assert!(result.is_some());
+        let error_msg = result.unwrap();
+        assert!(error_msg.contains("AccessDenied"));
+        assert!(error_msg.contains("not authorized"));
+    }
+
+    #[test]
+    fn test_assume_role_cache_is_profile_aware() {
+        let cache = ASSUME_ROLE_CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
+
+        let creds_dev = Credentials {
+            access_key_id: "ASIA_DEV_KEY".to_string(),
+            secret_access_key: "secret_dev".to_string(),
+            session_token: Some("token_dev".to_string()),
+        };
+        let creds_prod = Credentials {
+            access_key_id: "ASIA_PROD_KEY".to_string(),
+            secret_access_key: "secret_prod".to_string(),
+            session_token: Some("token_prod".to_string()),
+        };
+
+        let expiration = Instant::now() + Duration::from_secs(3600);
+
+        {
+            let mut guard = cache.lock().unwrap();
+            guard.insert(
+                "dev-role".to_string(),
+                CachedImdsCredentials {
+                    credentials: creds_dev.clone(),
+                    expiration,
+                },
+            );
+            guard.insert(
+                "prod-role".to_string(),
+                CachedImdsCredentials {
+                    credentials: creds_prod.clone(),
+                    expiration,
+                },
+            );
+        }
+
+        // Verify separate caching
+        {
+            let guard = cache.lock().unwrap();
+            let cached_dev = guard.get("dev-role").unwrap();
+            assert_eq!(cached_dev.credentials.access_key_id, "ASIA_DEV_KEY");
+
+            let cached_prod = guard.get("prod-role").unwrap();
+            assert_eq!(cached_prod.credentials.access_key_id, "ASIA_PROD_KEY");
+        }
+    }
+
+    #[test]
+    fn test_parse_ini_file_with_role_arn() {
+        let content = r#"
+[default]
+aws_access_key_id = AKIADEFAULT
+aws_secret_access_key = secret_default
+region = us-east-1
+
+[profile production]
+role_arn = arn:aws:iam::123456789012:role/ProductionAccess
+source_profile = default
+region = us-west-2
+external_id = my-external-id
+
+[profile staging]
+role_arn = arn:aws:iam::987654321098:role/StagingAccess
+source_profile = default
+role_session_name = my-custom-session
+duration_seconds = 7200
+"#;
+        let sections = parse_ini_file(content);
+
+        // Check default profile
+        assert!(sections.contains_key("default"));
+        let default_section = sections.get("default").unwrap();
+        assert_eq!(
+            default_section.get("aws_access_key_id").unwrap(),
+            "AKIADEFAULT"
+        );
+
+        // Check production profile with role_arn
+        assert!(sections.contains_key("production"));
+        let prod_section = sections.get("production").unwrap();
+        assert_eq!(
+            prod_section.get("role_arn").unwrap(),
+            "arn:aws:iam::123456789012:role/ProductionAccess"
+        );
+        assert_eq!(prod_section.get("source_profile").unwrap(), "default");
+        assert_eq!(prod_section.get("external_id").unwrap(), "my-external-id");
+
+        // Check staging profile
+        assert!(sections.contains_key("staging"));
+        let staging_section = sections.get("staging").unwrap();
+        assert_eq!(
+            staging_section.get("role_arn").unwrap(),
+            "arn:aws:iam::987654321098:role/StagingAccess"
+        );
+        assert_eq!(
+            staging_section.get("role_session_name").unwrap(),
+            "my-custom-session"
+        );
+        assert_eq!(staging_section.get("duration_seconds").unwrap(), "7200");
     }
 }

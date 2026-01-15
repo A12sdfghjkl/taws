@@ -169,9 +169,10 @@ taws uses a credential chain, trying each source in order:
 |----------|--------|-------------|
 | 1 | Environment Variables | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN` |
 | 2 | **AWS SSO** | If profile has SSO configured, uses SSO (prompts for login if needed) |
-| 3 | Credentials File | `~/.aws/credentials` |
-| 4 | Config File | `~/.aws/config` |
-| 5 | IMDSv2 | EC2 instance metadata |
+| 3 | **Role Assumption** | If profile has `role_arn` + `source_profile`, assumes the role |
+| 4 | Credentials File | `~/.aws/credentials` |
+| 5 | Config File | `~/.aws/config` |
+| 6 | IMDSv2 | EC2 instance metadata |
 
 ### AWS SSO
 
@@ -182,6 +183,54 @@ Both SSO config formats are supported:
 - Legacy: `sso_start_url` directly in profile
 
 If you already logged in via `aws sso login`, taws will use the cached token automatically.
+
+### IAM Role Assumption
+
+taws supports assuming IAM roles using `role_arn` and `source_profile` configuration. This is commonly used for:
+- Cross-account access (e.g., dev account assuming role in prod account)
+- Least-privilege access patterns
+- Chained role assumption
+
+**Example configuration** (`~/.aws/config`):
+
+```ini
+[profile base]
+region = us-east-1
+
+[profile production]
+role_arn = arn:aws:iam::123456789012:role/ProductionAccess
+source_profile = base
+region = us-west-2
+
+# Optional: external_id for cross-account trust
+[profile partner-account]
+role_arn = arn:aws:iam::987654321098:role/PartnerAccess
+source_profile = base
+external_id = my-external-id
+
+# Optional: custom session name and duration
+[profile staging]
+role_arn = arn:aws:iam::111222333444:role/StagingAccess
+source_profile = base
+role_session_name = taws-staging
+duration_seconds = 7200
+```
+
+**Supported options:**
+
+| Option | Required | Description |
+|--------|----------|-------------|
+| `role_arn` | Yes | ARN of the IAM role to assume |
+| `source_profile` | Yes | Profile to use for source credentials |
+| `external_id` | No | External ID for cross-account trust policies |
+| `role_session_name` | No | Custom session name (default: `taws-session`) |
+| `duration_seconds` | No | Session duration in seconds (default: 3600) |
+| `region` | No | Region for STS endpoint (inherits from source profile if not set) |
+
+**Notes:**
+- Chained role assumption is supported (source_profile can also use role_arn)
+- Temporary credentials are cached and automatically refreshed before expiration
+- Works with any source credential type (static credentials, SSO, IMDS, etc.)
 
 ---
 
