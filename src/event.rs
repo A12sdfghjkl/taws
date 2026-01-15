@@ -238,7 +238,29 @@ async fn handle_normal_mode(app: &mut App, key: KeyEvent) -> Result<bool> {
                                         } else if action.sdk_method == "ssm_connect" {
                                             app.request_ssm_connect();
                                             handled = true;
-                                        // Block action in readonly mode
+                                        } else if action.show_result {
+                                            // Action that displays result (e.g., get_secret_value)
+                                            // These are read-only operations (retrieve and display data),
+                                            // so they're allowed even in readonly mode
+                                            match crate::resource::execute_action_with_result(
+                                                &resource.service,
+                                                &action.sdk_method,
+                                                &app.clients,
+                                                &id
+                                            ).await {
+                                                Ok(data) => {
+                                                    app.describe_data = Some(data);
+                                                    app.describe_scroll = 0;
+                                                    app.last_action_display_name =
+                                                        Some(action.display_name.clone());
+                                                    app.mode = crate::app::Mode::Describe;
+                                                }
+                                                Err(e) => {
+                                                    app.error_message = Some(format!("Action failed: {}", e));
+                                                }
+                                            }
+                                            handled = true;
+                                        // Block mutating actions in readonly mode
                                         } else if app.readonly {
                                             app.show_warning(
                                                 "This operation is not supported in read-only mode",

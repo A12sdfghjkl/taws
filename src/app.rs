@@ -98,6 +98,7 @@ pub struct App {
     pub error_message: Option<String>,
     pub describe_scroll: usize,
     pub describe_data: Option<Value>, // Full resource details from describe API
+    pub last_action_display_name: Option<String>,
 
     // Auto-refresh
     pub last_refresh: std::time::Instant,
@@ -275,6 +276,7 @@ impl App {
             error_message: None,
             describe_scroll: 0,
             describe_data: None,
+            last_action_display_name: None,
             last_refresh: std::time::Instant::now(),
             config,
             last_key_press: None,
@@ -957,6 +959,7 @@ impl App {
         self.mode = Mode::Normal;
         self.pending_action = None;
         self.describe_data = None; // Clear describe data when exiting
+        self.last_action_display_name = None;
     }
 
     // =========================================================================
