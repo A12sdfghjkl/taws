@@ -603,7 +603,12 @@ pub enum CredentialSource {
 
 /// Check if role assumption is configured for a profile
 fn get_assume_role_config(profile: &str) -> Option<AssumeRoleConfig> {
-    let config_path = aws_config_dir().ok()?.join("config");
+    // Respect AWS_CONFIG_FILE environment variable
+    let config_path = if let Ok(path) = env::var("AWS_CONFIG_FILE") {
+        PathBuf::from(path)
+    } else {
+        aws_config_dir().ok()?.join("config")
+    };
     let content = fs::read_to_string(&config_path).ok()?;
     let sections = parse_ini_file(&content);
 
@@ -776,8 +781,10 @@ fn call_sts_assume_role(
         .unwrap_or_else(|| "taws-session".to_string());
     let duration_seconds = config.duration_seconds.unwrap_or(3600);
 
-    // Build STS endpoint
-    let sts_endpoint = format!("https://sts.{}.amazonaws.com/", region);
+    // Build STS endpoint - respect AWS_ENDPOINT_URL or TAWS_STS_ENDPOINT for LocalStack/testing
+    let sts_endpoint = env::var("TAWS_STS_ENDPOINT")
+        .or_else(|_| env::var("AWS_ENDPOINT_URL"))
+        .unwrap_or_else(|_| format!("https://sts.{}.amazonaws.com", region));
 
     // Build query parameters
     let mut params = vec![
@@ -800,9 +807,12 @@ fn call_sts_assume_role(
         .collect::<Vec<_>>()
         .join("&");
 
-    let url = format!("{}?{}", sts_endpoint, query_string);
+    // Build full URL - handle endpoints with or without trailing slash
+    let base = sts_endpoint.trim_end_matches('/');
+    let url = format!("{}/?{}", base, query_string);
 
     debug!("Calling STS AssumeRole: {}", config.role_arn);
+    debug!("STS endpoint: {}", sts_endpoint);
     trace!("STS URL: {}", url);
 
     // Parse URL for signing
