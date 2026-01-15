@@ -186,12 +186,15 @@ If you already logged in via `aws sso login`, taws will use the cached token aut
 
 ### IAM Role Assumption
 
-taws supports assuming IAM roles using `role_arn` and `source_profile` configuration. This is commonly used for:
+taws supports assuming IAM roles using `role_arn` with either `source_profile` or `credential_source`. This is commonly used for:
 - Cross-account access (e.g., dev account assuming role in prod account)
 - Least-privilege access patterns
 - Chained role assumption
+- Container-based deployments (ECS, Lambda)
 
-**Example configuration** (`~/.aws/config`):
+#### Using source_profile
+
+Reference another named profile for source credentials:
 
 ```ini
 [profile base]
@@ -207,30 +210,54 @@ region = us-west-2
 role_arn = arn:aws:iam::987654321098:role/PartnerAccess
 source_profile = base
 external_id = my-external-id
-
-# Optional: custom session name and duration
-[profile staging]
-role_arn = arn:aws:iam::111222333444:role/StagingAccess
-source_profile = base
-role_session_name = taws-staging
-duration_seconds = 7200
 ```
+
+#### Using credential_source
+
+Load source credentials from environment, EC2 metadata, or ECS container:
+
+```ini
+# For ECS tasks with task IAM roles
+[profile ecs-admin]
+role_arn = arn:aws:iam::123456789012:role/AdminRole
+credential_source = EcsContainer
+
+# For EC2 instances with instance roles
+[profile ec2-admin]
+role_arn = arn:aws:iam::123456789012:role/AdminRole
+credential_source = Ec2InstanceMetadata
+
+# For environments with AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY set
+[profile env-admin]
+role_arn = arn:aws:iam::123456789012:role/AdminRole
+credential_source = Environment
+```
+
+**Supported credential_source values:**
+
+| Value | Description |
+|-------|-------------|
+| `Environment` | Load from `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN` |
+| `Ec2InstanceMetadata` | Load from EC2 instance metadata (IMDSv2) |
+| `EcsContainer` | Load from ECS container credentials endpoint |
 
 **Supported options:**
 
 | Option | Required | Description |
 |--------|----------|-------------|
 | `role_arn` | Yes | ARN of the IAM role to assume |
-| `source_profile` | Yes | Profile to use for source credentials |
+| `source_profile` | One of | Profile to use for source credentials |
+| `credential_source` | these | Where to load source credentials from |
 | `external_id` | No | External ID for cross-account trust policies |
 | `role_session_name` | No | Custom session name (default: `taws-session`) |
 | `duration_seconds` | No | Session duration in seconds (default: 3600) |
-| `region` | No | Region for STS endpoint (inherits from source profile if not set) |
+| `region` | No | Region for STS endpoint |
 
 **Notes:**
+- Use exactly one of `source_profile` OR `credential_source` (not both)
 - Chained role assumption is supported (source_profile can also use role_arn)
 - Temporary credentials are cached and automatically refreshed before expiration
-- Works with any source credential type (static credentials, SSO, IMDS, etc.)
+- ECS container credentials require `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI` or `AWS_CONTAINER_CREDENTIALS_FULL_URI` environment variables (set automatically by ECS)
 
 ---
 
@@ -376,7 +403,7 @@ See [Authentication](#authentication) for credential setup.
 | `AWS_SESSION_TOKEN` | AWS session token (for temporary credentials) |
 | `AWS_SHARED_CREDENTIALS_FILE` | Custom path to credentials file (default: `~/.aws/credentials`) |
 | `AWS_CONFIG_FILE` | Custom path to config file (default: `~/.aws/config`) |
-| `AWS_ENDPOINT_URL` | Custom endpoint URL (for LocalStack, etc.) |
+| `AWS_ENDPOINT_URL` | Custom endpoint URL (for LocalStack, etc.) - also used for STS AssumeRole |
 
 ---
 

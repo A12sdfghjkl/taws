@@ -4,7 +4,8 @@
 //! - Environment variables (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN)
 //! - AWS profiles (~/.aws/credentials and ~/.aws/config)
 //! - AWS SSO (IAM Identity Center) via cached tokens
-//! - IAM Role assumption via role_arn and source_profile
+//! - IAM Role assumption via role_arn and source_profile/credential_source
+//! - ECS container credentials (via credential_source = EcsContainer)
 //! - IMDSv2 (EC2 instance metadata)
 
 use anyhow::{anyhow, Result};
@@ -59,6 +60,12 @@ static PROCESS_CACHE: OnceLock<std::sync::Mutex<HashMap<String, CachedImdsCreden
 /// Global cache for Assume Role credentials (keyed by profile name)
 static ASSUME_ROLE_CACHE: OnceLock<std::sync::Mutex<HashMap<String, CachedImdsCredentials>>> =
     OnceLock::new();
+
+/// Global cache for ECS container credentials
+static ECS_CACHE: OnceLock<std::sync::Mutex<Option<CachedImdsCredentials>>> = OnceLock::new();
+
+/// ECS container credentials endpoint base
+const ECS_CREDENTIALS_ENDPOINT: &str = "http://169.254.170.2";
 
 /// IMDSv2 metadata endpoint
 const IMDS_ENDPOINT: &str = "http://169.254.169.254";
@@ -568,8 +575,11 @@ pub fn list_profiles() -> Vec<String> {
 pub struct AssumeRoleConfig {
     /// The ARN of the role to assume
     pub role_arn: String,
-    /// The source profile to use for credentials
-    pub source_profile: String,
+    /// The source profile to use for credentials (mutually exclusive with credential_source)
+    pub source_profile: Option<String>,
+    /// The credential source type (mutually exclusive with source_profile)
+    /// Valid values: "Environment", "Ec2InstanceMetadata", "EcsContainer"
+    pub credential_source: Option<CredentialSource>,
     /// Optional external ID for cross-account access
     pub external_id: Option<String>,
     /// Optional role session name (defaults to "taws-session")
@@ -580,9 +590,25 @@ pub struct AssumeRoleConfig {
     pub region: Option<String>,
 }
 
+/// Supported credential sources for role assumption
+#[derive(Debug, Clone, PartialEq)]
+pub enum CredentialSource {
+    /// Load credentials from environment variables
+    Environment,
+    /// Load credentials from EC2 instance metadata (IMDSv2)
+    Ec2InstanceMetadata,
+    /// Load credentials from ECS container credentials endpoint
+    EcsContainer,
+}
+
 /// Check if role assumption is configured for a profile
 fn get_assume_role_config(profile: &str) -> Option<AssumeRoleConfig> {
-    let config_path = aws_config_dir().ok()?.join("config");
+    // Respect AWS_CONFIG_FILE environment variable
+    let config_path = if let Ok(path) = env::var("AWS_CONFIG_FILE") {
+        PathBuf::from(path)
+    } else {
+        aws_config_dir().ok()?.join("config")
+    };
     let content = fs::read_to_string(&config_path).ok()?;
     let sections = parse_ini_file(&content);
 
@@ -591,12 +617,35 @@ fn get_assume_role_config(profile: &str) -> Option<AssumeRoleConfig> {
     // Must have role_arn to be a role assumption profile
     let role_arn = section.get("role_arn")?.clone();
 
-    // source_profile is required for role assumption
-    let source_profile = section.get("source_profile")?.clone();
+    // Get source_profile and credential_source
+    let source_profile = section.get("source_profile").cloned();
+    let credential_source = section
+        .get("credential_source")
+        .and_then(|s| parse_credential_source(s));
+
+    // Must have exactly one of source_profile or credential_source
+    match (&source_profile, &credential_source) {
+        (Some(_), Some(_)) => {
+            debug!(
+                "Profile '{}' has both source_profile and credential_source - invalid configuration",
+                profile
+            );
+            return None;
+        }
+        (None, None) => {
+            debug!(
+                "Profile '{}' has role_arn but neither source_profile nor credential_source",
+                profile
+            );
+            return None;
+        }
+        _ => {}
+    }
 
     Some(AssumeRoleConfig {
         role_arn,
         source_profile,
+        credential_source,
         external_id: section.get("external_id").cloned(),
         role_session_name: section.get("role_session_name").cloned(),
         duration_seconds: section.get("duration_seconds").and_then(|s| s.parse().ok()),
@@ -604,7 +653,20 @@ fn get_assume_role_config(profile: &str) -> Option<AssumeRoleConfig> {
     })
 }
 
-/// Load credentials by assuming a role using source profile credentials
+/// Parse credential_source string value
+fn parse_credential_source(value: &str) -> Option<CredentialSource> {
+    match value {
+        "Environment" => Some(CredentialSource::Environment),
+        "Ec2InstanceMetadata" => Some(CredentialSource::Ec2InstanceMetadata),
+        "EcsContainer" => Some(CredentialSource::EcsContainer),
+        _ => {
+            debug!("Unknown credential_source value: {}", value);
+            None
+        }
+    }
+}
+
+/// Load credentials by assuming a role using source profile or credential_source
 fn load_from_assume_role(profile: &str, config: &AssumeRoleConfig) -> Result<Credentials> {
     // Check cache first
     let cache = ASSUME_ROLE_CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
@@ -621,25 +683,45 @@ fn load_from_assume_role(profile: &str, config: &AssumeRoleConfig) -> Result<Cre
         }
     }
 
-    // Recursively load credentials from source profile
-    // This handles chained role assumption (source_profile can also use role_arn)
-    debug!(
-        "Loading source credentials from profile '{}'",
-        config.source_profile
-    );
-    let source_creds = load_credentials(&config.source_profile).map_err(|e| {
-        anyhow!(
-            "Failed to load source credentials from profile '{}': {}",
-            config.source_profile,
-            e
-        )
-    })?;
+    // Load source credentials based on configuration
+    let source_creds = if let Some(ref source_profile) = config.source_profile {
+        // Recursively load credentials from source profile
+        // This handles chained role assumption (source_profile can also use role_arn)
+        debug!(
+            "Loading source credentials from profile '{}'",
+            source_profile
+        );
+        load_credentials(source_profile).map_err(|e| {
+            anyhow!(
+                "Failed to load source credentials from profile '{}': {}",
+                source_profile,
+                e
+            )
+        })?
+    } else if let Some(ref credential_source) = config.credential_source {
+        // Load credentials from credential_source
+        debug!(
+            "Loading source credentials from credential_source: {:?}",
+            credential_source
+        );
+        load_from_credential_source(credential_source)?
+    } else {
+        return Err(anyhow!(
+            "Profile '{}' has role_arn but no source_profile or credential_source",
+            profile
+        ));
+    };
 
     // Determine region for STS call
     let region = config
         .region
         .clone()
-        .or_else(|| get_profile_region(&config.source_profile))
+        .or_else(|| {
+            config
+                .source_profile
+                .as_ref()
+                .and_then(|p| get_profile_region(p))
+        })
         .unwrap_or_else(|| "us-east-1".to_string());
 
     // Call STS AssumeRole
@@ -664,6 +746,24 @@ fn load_from_assume_role(profile: &str, config: &AssumeRoleConfig) -> Result<Cre
     Ok(credentials)
 }
 
+/// Load credentials from a credential_source
+fn load_from_credential_source(source: &CredentialSource) -> Result<Credentials> {
+    match source {
+        CredentialSource::Environment => {
+            debug!("Loading credentials from Environment");
+            load_from_env()
+        }
+        CredentialSource::Ec2InstanceMetadata => {
+            debug!("Loading credentials from Ec2InstanceMetadata (IMDSv2)");
+            load_from_imds()
+        }
+        CredentialSource::EcsContainer => {
+            debug!("Loading credentials from EcsContainer");
+            load_from_ecs_container()
+        }
+    }
+}
+
 /// Call STS AssumeRole API using signed HTTP request
 fn call_sts_assume_role(
     config: &AssumeRoleConfig,
@@ -681,8 +781,10 @@ fn call_sts_assume_role(
         .unwrap_or_else(|| "taws-session".to_string());
     let duration_seconds = config.duration_seconds.unwrap_or(3600);
 
-    // Build STS endpoint
-    let sts_endpoint = format!("https://sts.{}.amazonaws.com/", region);
+    // Build STS endpoint - respect AWS_ENDPOINT_URL or TAWS_STS_ENDPOINT for LocalStack/testing
+    let sts_endpoint = env::var("TAWS_STS_ENDPOINT")
+        .or_else(|_| env::var("AWS_ENDPOINT_URL"))
+        .unwrap_or_else(|_| format!("https://sts.{}.amazonaws.com", region));
 
     // Build query parameters
     let mut params = vec![
@@ -705,9 +807,12 @@ fn call_sts_assume_role(
         .collect::<Vec<_>>()
         .join("&");
 
-    let url = format!("{}?{}", sts_endpoint, query_string);
+    // Build full URL - handle endpoints with or without trailing slash
+    let base = sts_endpoint.trim_end_matches('/');
+    let url = format!("{}/?{}", base, query_string);
 
     debug!("Calling STS AssumeRole: {}", config.role_arn);
+    debug!("STS endpoint: {}", sts_endpoint);
     trace!("STS URL: {}", url);
 
     // Parse URL for signing
@@ -1049,6 +1154,141 @@ pub fn is_imds_available() -> bool {
         .unwrap_or(false)
 }
 
+// =============================================================================
+// ECS Container Credentials Support
+// =============================================================================
+
+/// Load credentials from ECS container credentials endpoint
+///
+/// This function:
+/// 1. Checks for AWS_CONTAINER_CREDENTIALS_RELATIVE_URI or AWS_CONTAINER_CREDENTIALS_FULL_URI
+/// 2. Fetches credentials from the ECS metadata endpoint
+/// 3. Caches the credentials until near expiration
+fn load_from_ecs_container() -> Result<Credentials> {
+    // Check cache first
+    let cache = ECS_CACHE.get_or_init(|| std::sync::Mutex::new(None));
+
+    if let Ok(guard) = cache.lock() {
+        if let Some(ref cached) = *guard {
+            if cached.expiration > Instant::now() + CREDENTIAL_REFRESH_BUFFER {
+                trace!("Using cached ECS container credentials");
+                return Ok(cached.credentials.clone());
+            }
+        }
+    }
+
+    // Fetch fresh credentials
+    let (credentials, expiration) = fetch_ecs_container_credentials()?;
+
+    // Cache the credentials
+    if let Ok(mut guard) = cache.lock() {
+        *guard = Some(CachedImdsCredentials {
+            credentials: credentials.clone(),
+            expiration,
+        });
+        debug!(
+            "Cached ECS container credentials, expires in {:?}",
+            expiration - Instant::now()
+        );
+    }
+
+    Ok(credentials)
+}
+
+/// Fetch credentials from ECS container credentials endpoint
+fn fetch_ecs_container_credentials() -> Result<(Credentials, Instant)> {
+    // Determine the credentials URL
+    // Priority: AWS_CONTAINER_CREDENTIALS_FULL_URI > AWS_CONTAINER_CREDENTIALS_RELATIVE_URI
+    let (url, auth_token) = if let Ok(full_uri) = env::var("AWS_CONTAINER_CREDENTIALS_FULL_URI") {
+        // Full URI mode - may require authorization token
+        let token = env::var("AWS_CONTAINER_AUTHORIZATION_TOKEN").ok();
+        debug!("Using ECS full URI: {}", full_uri);
+        (full_uri, token)
+    } else if let Ok(relative_uri) = env::var("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI") {
+        // Relative URI mode - use the standard ECS endpoint
+        let url = format!("{}{}", ECS_CREDENTIALS_ENDPOINT, relative_uri);
+        debug!("Using ECS relative URI: {}", url);
+        (url, None)
+    } else {
+        return Err(anyhow!(
+            "ECS container credentials not available: neither AWS_CONTAINER_CREDENTIALS_FULL_URI \
+             nor AWS_CONTAINER_CREDENTIALS_RELATIVE_URI is set"
+        ));
+    };
+
+    // Create HTTP client with timeout
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .connect_timeout(Duration::from_secs(2))
+        .build()
+        .map_err(|e| anyhow!("Failed to create HTTP client: {}", e))?;
+
+    // Build request
+    let mut request = client.get(&url);
+
+    // Add authorization header if token is present
+    if let Some(ref token) = auth_token {
+        request = request.header("Authorization", token);
+    }
+
+    // Send request
+    trace!("Fetching ECS container credentials from: {}", url);
+    let response = request
+        .send()
+        .map_err(|e| anyhow!("Failed to fetch ECS container credentials: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(anyhow!(
+            "ECS container credentials request failed with status: {}",
+            response.status()
+        ));
+    }
+
+    // Parse JSON response
+    let creds_json: serde_json::Value = response
+        .json()
+        .map_err(|e| anyhow!("Failed to parse ECS credentials JSON: {}", e))?;
+
+    // Extract credentials
+    let access_key_id = creds_json
+        .get("AccessKeyId")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow!("AccessKeyId not found in ECS credentials response"))?
+        .to_string();
+
+    let secret_access_key = creds_json
+        .get("SecretAccessKey")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow!("SecretAccessKey not found in ECS credentials response"))?
+        .to_string();
+
+    let session_token = creds_json
+        .get("Token")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    // Parse expiration time
+    let expiration = if let Some(exp_str) = creds_json.get("Expiration").and_then(|v| v.as_str()) {
+        parse_expiration(exp_str).unwrap_or_else(|| Instant::now() + Duration::from_secs(3600))
+    } else {
+        Instant::now() + Duration::from_secs(3600)
+    };
+
+    debug!(
+        "Fetched ECS container credentials, expires in {:?}",
+        expiration - Instant::now()
+    );
+
+    Ok((
+        Credentials {
+            access_key_id,
+            secret_access_key,
+            session_token,
+        },
+        expiration,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1320,5 +1560,96 @@ duration_seconds = 7200
             "my-custom-session"
         );
         assert_eq!(staging_section.get("duration_seconds").unwrap(), "7200");
+    }
+
+    #[test]
+    fn test_parse_credential_source() {
+        assert_eq!(
+            parse_credential_source("Environment"),
+            Some(CredentialSource::Environment)
+        );
+        assert_eq!(
+            parse_credential_source("Ec2InstanceMetadata"),
+            Some(CredentialSource::Ec2InstanceMetadata)
+        );
+        assert_eq!(
+            parse_credential_source("EcsContainer"),
+            Some(CredentialSource::EcsContainer)
+        );
+        assert_eq!(parse_credential_source("Invalid"), None);
+        assert_eq!(parse_credential_source("environment"), None); // Case sensitive
+    }
+
+    #[test]
+    fn test_parse_ini_file_with_credential_source() {
+        let content = r#"
+[profile ecs-role]
+role_arn = arn:aws:iam::123456789012:role/EcsRole
+credential_source = EcsContainer
+region = us-east-1
+
+[profile ec2-role]
+role_arn = arn:aws:iam::123456789012:role/Ec2Role
+credential_source = Ec2InstanceMetadata
+
+[profile env-role]
+role_arn = arn:aws:iam::123456789012:role/EnvRole
+credential_source = Environment
+"#;
+        let sections = parse_ini_file(content);
+
+        // Check ECS profile
+        assert!(sections.contains_key("ecs-role"));
+        let ecs_section = sections.get("ecs-role").unwrap();
+        assert_eq!(
+            ecs_section.get("role_arn").unwrap(),
+            "arn:aws:iam::123456789012:role/EcsRole"
+        );
+        assert_eq!(
+            ecs_section.get("credential_source").unwrap(),
+            "EcsContainer"
+        );
+        assert!(ecs_section.get("source_profile").is_none());
+
+        // Check EC2 profile
+        assert!(sections.contains_key("ec2-role"));
+        let ec2_section = sections.get("ec2-role").unwrap();
+        assert_eq!(
+            ec2_section.get("credential_source").unwrap(),
+            "Ec2InstanceMetadata"
+        );
+
+        // Check Environment profile
+        assert!(sections.contains_key("env-role"));
+        let env_section = sections.get("env-role").unwrap();
+        assert_eq!(env_section.get("credential_source").unwrap(), "Environment");
+    }
+
+    #[test]
+    fn test_ecs_cache() {
+        let cache = ECS_CACHE.get_or_init(|| std::sync::Mutex::new(None));
+
+        let creds = Credentials {
+            access_key_id: "ASIA_ECS_KEY".to_string(),
+            secret_access_key: "secret_ecs".to_string(),
+            session_token: Some("token_ecs".to_string()),
+        };
+
+        let expiration = Instant::now() + Duration::from_secs(3600);
+
+        {
+            let mut guard = cache.lock().unwrap();
+            *guard = Some(CachedImdsCredentials {
+                credentials: creds.clone(),
+                expiration,
+            });
+        }
+
+        // Verify caching
+        {
+            let guard = cache.lock().unwrap();
+            let cached = guard.as_ref().unwrap();
+            assert_eq!(cached.credentials.access_key_id, "ASIA_ECS_KEY");
+        }
     }
 }
