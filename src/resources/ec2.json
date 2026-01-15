@@ -20,6 +20,7 @@
       ],
       "sub_resources": [],
       "actions": [
+        { "key": "c", "display_name": "Connect (SSM)", "shortcut": "c", "sdk_method": "ssm_connect" },
         { "key": "s", "display_name": "Start", "shortcut": "s", "sdk_method": "start_instance", "confirm": { "message": "Start instance", "default_yes": false } },
         { "key": "S", "display_name": "Stop", "shortcut": "S", "sdk_method": "stop_instance", "confirm": { "message": "Stop instance", "default_yes": false } },
         { "key": "r", "display_name": "Reboot", "shortcut": "r", "sdk_method": "reboot_instance", "confirm": { "message": "Reboot instance", "default_yes": false } },
@@ -38,6 +39,7 @@
         "PublicIpAddress": { "source": "/ipAddress", "default": "-" },
         "PrivateIpAddress": { "source": "/privateIpAddress", "default": "-" },
         "LaunchTime": { "source": "/launchTime", "default": "-" },
+        "Platform": { "source": "/platform", "default": "" },
         "Tags": { "source": "/tagSet/item", "transform": "tags_to_map" }
       },
       "action_configs": {

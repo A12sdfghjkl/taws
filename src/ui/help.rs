@@ -31,6 +31,7 @@ pub fn render(f: &mut Frame, _app: &App) {
         create_key_line("?", "Toggle help"),
         Line::from(""),
         create_section("EC2 Actions"),
+        create_key_line("c", "Connect via SSM"),
         create_key_line("s", "Start instance"),
         create_key_line("S", "Stop instance"),
         create_key_line("r", "Reboot instance"),

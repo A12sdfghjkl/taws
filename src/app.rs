@@ -126,8 +126,19 @@ pub struct App {
     // Log tail state
     pub log_tail_state: Option<LogTailState>,
 
+    // SSM connect request (instance_id, region, profile)
+    pub ssm_connect_request: Option<SsmConnectRequest>,
+
     // Fuzzy matcher for filtering (reused to avoid repeated allocations)
     pub fuzzy_matcher: SkimMatcherV2,
+}
+
+/// SSM Connect request data
+#[derive(Debug, Clone)]
+pub struct SsmConnectRequest {
+    pub instance_id: String,
+    pub region: String,
+    pub profile: String,
 }
 
 /// Pagination state for resource listings
@@ -273,6 +284,7 @@ impl App {
             sso_state: None,
             pagination: PaginationState::default(),
             log_tail_state: None,
+            ssm_connect_request: None,
             fuzzy_matcher: SkimMatcherV2::default().ignore_case(),
         }
     }
@@ -1419,5 +1431,71 @@ impl App {
     pub fn exit_log_tail_mode(&mut self) {
         self.log_tail_state = None;
         self.mode = Mode::Normal;
+    }
+
+    // =========================================================================
+    // SSM Connect
+    // =========================================================================
+
+    /// Request SSM connect to the selected EC2 instance
+    /// Returns true if a connect request was made, false otherwise
+    pub fn request_ssm_connect(&mut self) -> bool {
+        // Get the selected item
+        let Some(item) = self.selected_item().cloned() else {
+            return false;
+        };
+
+        // Extract instance ID
+        let instance_id = extract_json_value(&item, "InstanceId");
+        if instance_id == "-" || instance_id.is_empty() {
+            self.show_warning("Could not get instance ID");
+            return false;
+        }
+
+        // Check if instance is running
+        let state = extract_json_value(&item, "State");
+        if state != "running" {
+            self.show_warning(&format!(
+                "Cannot connect: instance is '{}'. Instance must be running.",
+                state
+            ));
+            return false;
+        }
+
+        // Check if it's a Windows instance
+        let platform = extract_json_value(&item, "Platform");
+        if platform.to_lowercase() == "windows" {
+            self.show_warning("SSM shell connect is not supported for Windows instances. Use RDP or Fleet Manager instead.");
+            return false;
+        }
+
+        // Check if session-manager-plugin is installed
+        if !Self::is_ssm_plugin_installed() {
+            self.show_warning("session-manager-plugin is not installed.\n\nhttps://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html");
+            return false;
+        }
+
+        // Set the connect request - will be handled by main loop
+        self.ssm_connect_request = Some(SsmConnectRequest {
+            instance_id,
+            region: self.region.clone(),
+            profile: self.profile.clone(),
+        });
+
+        true
+    }
+
+    /// Check if session-manager-plugin is installed
+    fn is_ssm_plugin_installed() -> bool {
+        std::process::Command::new("session-manager-plugin")
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+
+    /// Take the SSM connect request (clears it)
+    pub fn take_ssm_connect_request(&mut self) -> Option<SsmConnectRequest> {
+        self.ssm_connect_request.take()
     }
 }

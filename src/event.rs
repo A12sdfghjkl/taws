@@ -234,6 +234,10 @@ async fn handle_normal_mode(app: &mut App, key: KeyEvent) -> Result<bool> {
                                         if action.sdk_method == "tail_logs" {
                                             app.enter_log_tail_mode().await?;
                                             handled = true;
+                                        // Special handling for SSM connect
+                                        } else if action.sdk_method == "ssm_connect" {
+                                            app.request_ssm_connect();
+                                            handled = true;
                                         // Block action in readonly mode
                                         } else if app.readonly {
                                             app.show_warning(

@@ -245,6 +245,7 @@ AWS_ENDPOINT_URL=http://localhost:4566 taws
 | Region shortcuts | `0-5` | Quick switch to common regions |
 | Quit | `Ctrl-c` | Exit taws |
 | **EC2 Actions** | | |
+| Connect (SSM) | `c` | Open SSM shell session to instance |
 | Start instance | `s` | Start selected EC2 instance |
 | Stop instance | `S` | Stop selected EC2 instance |
 | Terminate | `Ctrl+d` | Terminate selected EC2 instance |
@@ -327,6 +328,20 @@ See [Authentication](#authentication) for credential setup.
 | `AWS_SHARED_CREDENTIALS_FILE` | Custom path to credentials file (default: `~/.aws/credentials`) |
 | `AWS_CONFIG_FILE` | Custom path to config file (default: `~/.aws/config`) |
 | `AWS_ENDPOINT_URL` | Custom endpoint URL (for LocalStack, etc.) |
+
+---
+
+## SSM Connect (EC2 Shell Access)
+
+Press `c` on a running EC2 instance to open an interactive shell session via AWS Systems Manager.
+
+**Requirements:**
+- [session-manager-plugin](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html) must be installed
+- EC2 instance must have SSM Agent running
+- Instance must be running (not stopped/terminated)
+- Linux instances only (Windows not supported via shell)
+
+**Note:** When you exit the shell session (`exit`), you'll return to taws.
 
 ---
 

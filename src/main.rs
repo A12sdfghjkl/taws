@@ -856,6 +856,11 @@ where
             return Ok(());
         }
 
+        // Handle SSM connect request (requires suspending TUI)
+        if let Some(request) = app.take_ssm_connect_request() {
+            execute_ssm_connect(terminal, &request)?;
+        }
+
         // Poll SSO if in waiting state
         if app.mode == Mode::SsoLogin {
             event::poll_sso_if_waiting(app).await;
@@ -871,4 +876,81 @@ where
             let _ = app.refresh_current().await;
         }
     }
+}
+
+/// Execute SSM connect by suspending TUI and running aws ssm start-session
+fn execute_ssm_connect<B: Backend>(
+    terminal: &mut Terminal<B>,
+    request: &app::SsmConnectRequest,
+) -> Result<()>
+where
+    B::Error: Send + Sync + 'static,
+{
+    use std::io::Write;
+
+    // Suspend TUI - restore terminal to normal mode
+    crossterm::terminal::disable_raw_mode()?;
+    crossterm::execute!(
+        std::io::stdout(),
+        crossterm::terminal::LeaveAlternateScreen,
+        crossterm::cursor::Show
+    )?;
+
+    // Print connection info
+    println!(
+        "\n\x1b[1;36m>>> Connecting to {} via SSM...\x1b[0m\n",
+        request.instance_id
+    );
+    std::io::stdout().flush()?;
+
+    // Run aws ssm start-session
+    let status = std::process::Command::new("aws")
+        .args([
+            "ssm",
+            "start-session",
+            "--target",
+            &request.instance_id,
+            "--region",
+            &request.region,
+            "--profile",
+            &request.profile,
+        ])
+        .status();
+
+    match status {
+        Ok(exit_status) => {
+            if !exit_status.success() {
+                let code = exit_status.code().unwrap_or(-1);
+                println!("\n\x1b[1;33mSSM session exited with code: {}\x1b[0m", code);
+                if code == 254 {
+                    println!("\x1b[0;33mThis usually means the instance is not connected to SSM.");
+                    println!(
+                        "Check that SSM Agent is installed and running on the instance.\x1b[0m"
+                    );
+                }
+            }
+        }
+        Err(e) => {
+            println!("\n\x1b[1;31mFailed to start SSM session: {}\x1b[0m", e);
+        }
+    }
+
+    println!("\n\x1b[1;36m>>> Returning to taws... Press any key.\x1b[0m");
+    std::io::stdout().flush()?;
+
+    // Wait for a key press before restoring TUI
+    crossterm::terminal::enable_raw_mode()?;
+    let _ = crossterm::event::read(); // Wait for any key
+    crossterm::terminal::disable_raw_mode()?;
+
+    // Restore TUI
+    crossterm::terminal::enable_raw_mode()?;
+    crossterm::execute!(
+        std::io::stdout(),
+        crossterm::terminal::EnterAlternateScreen,
+        crossterm::cursor::Hide
+    )?;
+    terminal.clear()?;
+
+    Ok(())
 }
