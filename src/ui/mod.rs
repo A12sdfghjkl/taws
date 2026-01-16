@@ -281,6 +281,14 @@ fn truncate_string(s: &str, max_len: usize) -> String {
     }
 }
 
+fn describe_title(resource_display_name: &str, action_display_name: Option<&str>) -> String {
+    if let Some(action) = action_display_name {
+        format!(" {} ", action)
+    } else {
+        format!(" {} Details ", resource_display_name)
+    }
+}
+
 fn render_describe_view(f: &mut Frame, app: &App, area: Rect) {
     let json = app
         .selected_item_json()
@@ -291,7 +299,10 @@ fn render_describe_view(f: &mut Frame, app: &App, area: Rect) {
     let total_lines = lines.len();
 
     let title = if let Some(resource) = app.current_resource() {
-        format!(" {} Details ", resource.display_name)
+        describe_title(
+            &resource.display_name,
+            app.last_action_display_name.as_deref(),
+        )
     } else {
         " Details ".to_string()
     };
@@ -602,4 +613,21 @@ fn render_crumb(f: &mut Frame, app: &App, area: Rect) {
 
     let paragraph = Paragraph::new(crumb);
     f.render_widget(paragraph, area);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::describe_title;
+
+    #[test]
+    fn describe_title_uses_action_display_name_when_present() {
+        let title = describe_title("Secrets Manager Secrets", Some("Secret Value"));
+        assert_eq!(title, " Secret Value ");
+    }
+
+    #[test]
+    fn describe_title_falls_back_to_resource_details() {
+        let title = describe_title("EC2 Instances", None);
+        assert_eq!(title, " EC2 Instances Details ");
+    }
 }
