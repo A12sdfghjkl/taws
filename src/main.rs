@@ -15,7 +15,8 @@ pub const VERSION: &str = match option_env!("TAWS_VERSION") {
 use anyhow::Result;
 use app::{App, Mode, SsoLoginState};
 use aws::client::ClientResult;
-use clap::{Parser, ValueEnum};
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
+use clap_complete::{generate, Shell};
 use config::Config;
 use crossterm::{
     event::{poll, read, Event, KeyCode, KeyModifiers},
@@ -53,6 +54,19 @@ struct Args {
     /// Custom AWS endpoint URL (for LocalStack, etc.). Also reads from AWS_ENDPOINT_URL env var.
     #[arg(long)]
     endpoint_url: Option<String>,
+
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Subcommand, Debug)]
+enum Command {
+    /// Generate shell completion scripts
+    Completion {
+        /// Shell to generate completions for
+        #[arg(value_enum)]
+        shell: Shell,
+    },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -128,6 +142,13 @@ fn get_log_path() -> PathBuf {
 async fn main() -> Result<()> {
     // Parse CLI arguments
     let args = Args::parse();
+
+    // Handle completion subcommand (doesn't need TUI)
+    if let Some(Command::Completion { shell }) = args.command {
+        let mut cmd = Args::command();
+        generate(shell, &mut cmd, "taws", &mut std::io::stdout());
+        return Ok(());
+    }
 
     // Setup logging (keep guard alive for the duration of the program)
     let _log_guard = setup_logging(args.log_level);

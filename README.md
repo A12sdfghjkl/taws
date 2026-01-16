@@ -294,6 +294,26 @@ AWS_ENDPOINT_URL=http://localhost:4566 taws
 | **macOS** | `~/Library/Application Support/taws/taws.log` |
 | **Windows** | `%APPDATA%\taws\taws.log` |
 
+### Shell Completion
+
+taws supports shell completion for bash, zsh, fish, and PowerShell.
+
+```bash
+# Bash (add to ~/.bashrc)
+eval "$(taws completion bash)"
+
+# Zsh (add to ~/.zshrc)
+eval "$(taws completion zsh)"
+
+# Fish (add to ~/.config/fish/config.fish)
+taws completion fish | source
+
+# PowerShell (add to $PROFILE)
+taws completion powershell | Out-String | Invoke-Expression
+```
+
+After adding the completion script, restart your shell or source the config file.
+
 ---
 
 ## Key Bindings
