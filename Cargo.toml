@@ -1,6 +1,6 @@
 [package]
 name = "taws"
-version = "1.2.0"
+version = "1.2.1"
 edition = "2021"
 description = "Terminal UI for AWS - navigate, observe, and manage AWS resources"
 license = "MIT"
